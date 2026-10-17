@@ -14,6 +14,7 @@ from pathlib import Path
 import gi
 
 from .storage import RATE
+from .metronome import ClickSource, branch as metronome_branch
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
@@ -127,8 +128,9 @@ class Engine:
         self.record_limit = 60 * 60  # Standard WAV stays well below its 4 GB limit.
         self._lock = threading.Lock()
         self._first_buffer = True
+        self.click_source = None
 
-    def _launch(self, description: str, mode: str, configure=None):
+    def _launch(self, description: str, mode: str, configure=None, position=0.0):
         self.pipeline = Gst.parse_launch(description)
         self.bus = self.pipeline.get_bus()
         self.bus.add_signal_watch()
@@ -139,13 +141,18 @@ class Engine:
             capture.connect("new-sample", self._sample)
         if configure:
             configure(self.pipeline)
+        if position > 0:
+            self.pipeline.set_state(Gst.State.PAUSED)
+            self.pipeline.get_state(2 * Gst.SECOND)
+            if not self.seek(position):
+                raise RuntimeError("Could not seek to the selected position.")
         if self.pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
             self.stop()
             raise RuntimeError("Could not start the audio device. Refresh devices in Audio settings.")
 
     def capture(self, device: Device, pair: tuple[int, int], path: Path | None = None,
                 backing: Path | None = None, backing_gain=0.65,
-                output: Device | None = None, source_override=None, test_sink=None):
+                output: Device | None = None, source_override=None, test_sink=None, metronome=None):
         self.stop()
         if max(pair) >= device.channels:
             raise ValueError("The selected input channels are unavailable on this device.")
@@ -166,13 +173,24 @@ class Engine:
             "appsink name=capture emit-signals=true sync=false async=false "
             "max-buffers=8 drop=false wait-on-eos=false"
         )
+        monitor_metronome = metronome is not None and (output is not None or test_sink is not None)
+        if backing or monitor_metronome:
+            description += (" audiomixer name=mix ! audioconvert ! "
+                            f"audio/x-raw,format=F32LE,channels=2,rate={RATE} ! "
+                            + output_chain(output, test_sink))
         if backing:
             description += (f" filesrc location={quote(backing)} ! wavparse ! audioconvert ! "
                             f"audio/x-raw,format=F32LE,channels=2,rate={RATE} ! "
-                            f"volume name=backing_volume volume={backing_gain} ! "
-                            + output_chain(output, test_sink))
+                            f"volume name=backing_volume volume={backing_gain} ! queue ! mix.sink_0")
+        if monitor_metronome:
+            description += " " + metronome_branch(metronome)
         try:
-            self._launch(description, "record" if path else "meter")
+            def configure(pipeline):
+                if monitor_metronome:
+                    self.click_source = ClickSource(metronome.bpm, self.record_limit)
+                    self.click_source.attach(pipeline.get_by_name("metronome_source"))
+
+            self._launch(description, "record" if path else "meter", configure)
         except Exception:
             self.stop()
             raise
@@ -222,9 +240,9 @@ class Engine:
 
     def play(self, backing: Path | None, take: Path | None, output: Device | None,
              backing_gain=0.65, guitar_gain=1.0, position=0.0, alignment_ms=0,
-             test_sink=None):
+             test_sink=None, metronome=None):
         self.stop()
-        if not backing and not take:
+        if not backing and not take and not (metronome and metronome.enabled):
             return
         branches = []
         for index, (path, gain) in enumerate(((backing, backing_gain), (take, guitar_gain))):
@@ -233,6 +251,16 @@ class Engine:
                                 f"audio/x-raw,format=F32LE,channels=2,rate={RATE} ! "
                                 f"volume name={'backing' if index == 0 else 'guitar'}_volume volume={gain} ! "
                                 f"queue ! mix.sink_{index}")
+        if metronome is not None:
+            branches.append(metronome_branch(metronome))
+        duration = None
+        if metronome is not None and (backing or take):
+            durations = []
+            for path, offset in ((backing, 0), (take, alignment_ms / 1000)):
+                if path:
+                    with wave.open(str(path)) as audio:
+                        durations.append(max(0, audio.getnframes() / audio.getframerate() + offset))
+            duration = max(durations)
         description = ("audiomixer name=mix ! audioconvert ! "
                        f"audio/x-raw,format=F32LE,channels=2,rate={RATE} ! "
                        + output_chain(output, test_sink) + " " + " ".join(branches))
@@ -240,12 +268,11 @@ class Engine:
             def configure(pipeline):
                 if take and alignment_ms:
                     pipeline.get_by_name("mix").get_static_pad("sink_1").set_offset(alignment_ms * Gst.MSECOND)
+                if metronome is not None:
+                    self.click_source = ClickSource(metronome.bpm, duration)
+                    self.click_source.attach(pipeline.get_by_name("metronome_source"))
 
-            self._launch(description, "play", configure)
-            if position > 0:
-                # All playback inputs are local decoded WAVs; preroll precedes the initial seek.
-                self.pipeline.get_state(2 * Gst.SECOND)
-                self.seek(position)
+            self._launch(description, "play", configure, position)
         except Exception:
             self.stop()
             raise
@@ -254,6 +281,14 @@ class Engine:
         element = self.pipeline.get_by_name(f"{name}_volume") if self.pipeline else None
         if element:
             element.set_property("volume", value)
+
+    def set_metronome(self, settings):
+        if self.click_source:
+            self.click_source.bpm = settings.bpm
+        element = self.pipeline.get_by_name("metronome_volume") if self.pipeline else None
+        if element:
+            element.set_property("volume", settings.gain)
+            element.set_property("mute", not settings.enabled)
 
     def seek(self, seconds: float):
         if self.pipeline and self.mode in ("play", "pause"):
@@ -282,6 +317,7 @@ class Engine:
             self.bus = None
         if pipeline:
             pipeline.set_state(Gst.State.NULL)
+        self.click_source = None
         with self._lock:
             if self.writer:
                 self.writer.close()

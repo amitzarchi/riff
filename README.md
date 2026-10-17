@@ -34,9 +34,14 @@ yt-dlp (Deno is installed on this machine).
    **Download & add**. Or choose a local audio file / drop it onto the backing lane
    (WAV, MP3, FLAC, Ogg, M4A, and other FFmpeg formats).
    A backing track is optional; a track playing in another app can accompany guitar-only recording.
-4. Press **R** to record. The backing starts at the beginning, and a new stereo take
+4. Optionally turn on the permanent **Metronome** track (**M**), set its BPM and
+   click volume. It follows playback and recording in 4/4, accenting the first beat.
+   The click is monitor only: it never enters a take, the mix export, or guitar export.
+   BPM, volume, and on/off are saved with the session and can be changed while playing.
+   You can also press **Space** with just the metronome enabled to practice without audio files.
+5. Press **R** to record. The backing starts at the beginning, and a new stereo take
    is saved at **48 kHz / 24-bit**. Press **R** or **Esc** to finish.
-5. Select a take, press **Space** to hear it with the backing, and adjust the two
+6. Select a take, press **Space** to hear it with the backing, and adjust the two
    volume sliders. Export the mix or guitar only as WAV.
 
 The live input meter does not send guitar audio back to the speakers. The Quad
@@ -61,6 +66,8 @@ the numbered USB channel order. Normal microphone inputs use PulseAudio capture.
 - One backing track and one selected guitar take; every new recording keeps previous takes.
 - Play/pause, stop, seek, rewind, and playback repeat. Recording always starts at zero.
 - Two playback/export volume sliders. The recorded guitar WAV remains unaltered.
+- A permanent, optional metronome lane: 40–300 BPM, separate click volume, and a
+  beat grid following the transport. It is off by default and excluded from every export.
 - A live input meter with a clipping indicator and real waveform envelopes.
 - Session name, new/open session, and a button to show the session's files.
 - Optional guitar alignment from −500 to +500 ms, applied to playback and export.
@@ -69,7 +76,7 @@ the numbered USB channel order. Normal microphone inputs use PulseAudio capture.
 - Export sums the selected tracks at their slider levels and peak limits the result
   to prevent mix overload. Raw takes are never normalized or limited.
 
-No effects, editing tools, plugins, tempo grid, or multitrack arrangement. Playback
+No effects, editing tools, plugins, or multitrack arrangement. Playback
 repeat does not loop recording. A single take ends automatically at one hour so
 standard WAV files stay comfortably below their size limit.
 
@@ -113,6 +120,7 @@ The most recent session and device choices are remembered in
 | --- | --- |
 | Space | Play / pause |
 | R | Record / finish take |
+| M | Toggle metronome |
 | Esc | Stop |
 | Home | Back to start |
 | Ctrl+O | Add YouTube link or audio file |
@@ -132,6 +140,11 @@ The audio integration tests generate known signals and verify stereo channel
 selection, simultaneous recording/backing playback, transport controls, WAV
 format/duration, positive and negative alignment in playback and export, and
 interrupted-session recovery. They use fake audio sinks and never open a microphone.
+Metronome checks render the actual monitoring output to verify sample timing,
+downbeat accents, pause/seek/repeat, live tempo/volume/mute changes, and finite
+playback duration. A silent generated input stays silent in the recorded take and
+both exports while the monitoring mix contains audible clicks. Native GTK previews
+also exercise the controls during recording and playback in light and dark themes.
 
 An opt-in regression checks actual PipeWire channel negotiation using temporary
 virtual devices and distinct signals on eight AUX channels. It removes those

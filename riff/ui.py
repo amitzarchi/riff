@@ -14,6 +14,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 from . import theme  # noqa: E402
 from .audio import Engine, amplitude, devices  # noqa: E402
 from .download import DownloadCancelled, YouTubeDownload  # noqa: E402
+from .metronome import MetronomeSettings  # noqa: E402
 from .storage import (PEAK_RATE, STATE_DIR, Session, atomic_json, export_audio,  # noqa: E402
                       import_backing, read_json, read_peaks)
 
@@ -128,6 +129,54 @@ class Waveform(Gtk.DrawingArea):
             cr.line_to(x, 28)
             cr.close_path()
             cr.fill()
+
+
+class BeatGrid(Waveform):
+    def __init__(self, window):
+        super().__init__(window, "metronome_color", "")
+
+    def draw(self, _area, cr, width, height):
+        def color(token, alpha=1):
+            value = self.window.colors[token]
+            cr.set_source_rgba(*(int(value[i:i + 2], 16) / 255 for i in (1, 3, 5)), alpha)
+
+        settings = self.window.metronome_settings
+        total, position = self.window.duration, self.window.position
+        left, span, period = 20, max(1, width - 40), 60 / settings.bpm
+        spacing = span * period / total
+        stride = max(1, math.ceil(10 / spacing))
+        if stride > 1:
+            stride = math.ceil(stride / 4) * 4
+        active = settings.enabled and self.window.engine.mode in ("record", "play")
+        current = math.floor(position / period)
+        cr.select_font_face("monospace", 0, 0)
+        cr.set_font_size(9)
+        for beat in range(0, math.floor(total / period) + 1, stride):
+            x = left + beat * period / total * span
+            downbeat = beat % 4 == 0
+            color("metronome_color", (0.9 if downbeat else 0.45) if settings.enabled else 0.2)
+            cr.set_line_width(2 if downbeat else 1)
+            cr.move_to(x + 0.5, 36 if downbeat else 48)
+            cr.line_to(x + 0.5, height - 36)
+            cr.stroke()
+            if active and beat == current and position % period < 0.12:
+                color("metronome_color", 0.18)
+                cr.rectangle(x, 30, min(spacing, 22), height - 60)
+                cr.fill()
+            if spacing >= 18 or downbeat:
+                color("muted_text")
+                cr.move_to(x + 3, 22)
+                cr.show_text(str(beat % 4 + 1))
+        color("muted_text")
+        cr.move_to(left, height - 13)
+        cr.show_text("4/4  ·  Not in exports")
+        if 0 <= position <= total:
+            color("error_color" if self.window.engine.mode == "record" else "foreground", 0.9)
+            x = left + position / total * span
+            cr.set_line_width(1)
+            cr.move_to(x + 0.5, 28)
+            cr.line_to(x + 0.5, height - 28)
+            cr.stroke()
 
 
 class BackingDialog(Gtk.Window):
@@ -316,7 +365,7 @@ class Window(Gtk.ApplicationWindow):
         self.colors = palette
         self._css_provider.load_from_string(theme.css(palette))
         Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", palette["mode"] == "dark")
-        for name in ("backing_wave", "guitar_wave"):
+        for name in ("backing_wave", "guitar_wave", "metronome_wave"):
             if area := getattr(self, name, None):
                 area.queue_draw()
 
@@ -332,7 +381,11 @@ class Window(Gtk.ApplicationWindow):
     def duration(self):
         backing, take = self.session.data.get("backing"), self.session.selected
         return max(10, backing["duration"] if backing else 0, take["duration"] if take else 0,
-                   self.engine.position if self.engine.mode == "record" else 0)
+                   math.ceil(self.position / 10) * 10)
+
+    @property
+    def metronome_settings(self):
+        return MetronomeSettings.from_session(self.session.data)
 
     def build(self):
         header = Gtk.HeaderBar()
@@ -386,6 +439,7 @@ class Window(Gtk.ApplicationWindow):
 
         self.backing_wave = Waveform(self, "backing_color", "Add a file or YouTube link")
         self.guitar_wave = Waveform(self, "guitar_color", "Ready for your next take")
+        self.track_controls = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
         self.backing_name = label("No backing track", ["muted", "small"])
         self.guitar_name = label("No takes yet", ["muted", "small"])
         self.backing_slider = self.gain_slider("backing")
@@ -395,6 +449,7 @@ class Window(Gtk.ApplicationWindow):
                                  self.backing_wave, "backing-accent", self.import_button))
         content.append(self.lane("02", "Guitar", self.guitar_name, self.guitar_slider,
                                  self.guitar_wave, "guitar-accent"))
+        content.append(self.metronome_lane())
         take_heading = box(spacing=12, children=[label("TAKES", ["eyebrow"])])
         self.take_count = label("0", ["muted", "small", "mono"])
         take_heading.append(self.take_count)
@@ -455,6 +510,8 @@ class Window(Gtk.ApplicationWindow):
         controls = box(vertical=True, spacing=6)
         controls.add_css_class("lane-controls")
         controls.set_size_request(188, -1)
+        controls.set_hexpand(False)
+        self.track_controls.add_widget(controls)
         controls.append(box(spacing=10, children=[label(number, ["mono", "small", accent_class]),
                                                label(title, ["track-name"])]))
         subtitle.set_ellipsize(Pango.EllipsizeMode.END)
@@ -476,6 +533,60 @@ class Window(Gtk.ApplicationWindow):
         slider.set_tooltip_text("Playback / export volume · recording stays unaltered")
         slider.connect("value-changed", self.gain_changed, name)
         return slider
+
+    def metronome_lane(self):
+        row = box()
+        row.add_css_class("lane")
+        row.add_css_class("metronome-lane")
+        controls = box(vertical=True, spacing=6)
+        controls.add_css_class("lane-controls")
+        controls.set_size_request(188, -1)
+        controls.set_hexpand(False)
+        self.track_controls.add_widget(controls)
+        controls.append(box(spacing=10, children=[label("03", ["mono", "small", "metronome-accent"]),
+                                               label("Metronome", ["track-name"])]))
+        controls.append(label("Monitor only", ["muted", "small"]))
+        tempo = box(spacing=6)
+        self.metronome_bpm = Gtk.SpinButton.new_with_range(40, 300, 1)
+        self.metronome_bpm.set_width_chars(3)
+        self.metronome_bpm.set_numeric(True)
+        self.metronome_bpm.set_tooltip_text("Tempo in beats per minute · 4/4")
+        self.metronome_bpm.connect("value-changed", self.metronome_changed)
+        tempo.append(self.metronome_bpm)
+        tempo.append(label("BPM", ["small", "muted"]))
+        tempo.append(Gtk.Box(hexpand=True))
+        self.metronome_toggle = Gtk.ToggleButton(label="Off", tooltip_text="Toggle click during playback / recording · M")
+        self.metronome_toggle.connect("toggled", self.metronome_changed)
+        tempo.append(self.metronome_toggle)
+        controls.append(tempo)
+        self.metronome_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 0.01)
+        self.metronome_slider.set_draw_value(False)
+        self.metronome_slider.set_tooltip_text("Click volume · never recorded or exported")
+        self.metronome_slider.connect("value-changed", self.metronome_changed)
+        controls.append(self.metronome_slider)
+        row.append(controls)
+        self.metronome_wave = BeatGrid(self)
+        row.append(self.metronome_wave)
+        return row
+
+    def metronome_changed(self, *_):
+        if self._loading:
+            return
+        enabled = self.metronome_toggle.get_active()
+        if enabled and not self.output:
+            self.metronome_toggle.set_active(False)
+            self.notice("Choose a playback output in Audio settings first.", True)
+            return
+        self.metronome_toggle.set_label("On" if enabled else "Off")
+        self.session.data.update(metronome_enabled=enabled,
+                                 metronome_bpm=self.metronome_bpm.get_value_as_int(),
+                                 metronome_gain=self.metronome_slider.get_value())
+        self.engine.set_metronome(self.metronome_settings)
+        if not enabled and self.engine.mode in ("play", "pause") and not (
+                self.session.selected or self.session.data.get("backing")):
+            self.stop()
+        self.save()
+        self.metronome_wave.queue_draw()
 
     def gain_changed(self, slider, name):
         if self._loading:
@@ -510,6 +621,11 @@ class Window(Gtk.ApplicationWindow):
         self.name_entry.set_text(self.session.data["name"])
         self.backing_slider.set_value(self.session.data.get("backing_gain", 0.65))
         self.guitar_slider.set_value(self.session.data.get("guitar_gain", 1.0))
+        metronome = self.metronome_settings
+        self.metronome_bpm.set_value(metronome.bpm)
+        self.metronome_slider.set_value(metronome.gain)
+        self.metronome_toggle.set_active(metronome.enabled)
+        self.metronome_toggle.set_label("On" if metronome.enabled else "Off")
         self._loading = False
         self.refresh_tracks()
         self.refresh_takes()
@@ -595,7 +711,7 @@ class Window(Gtk.ApplicationWindow):
         self._peaks_version += 1
         self.guitar_wave.peaks = []
         backing = self.session.data.get("backing")
-        if backing and not self.output:
+        if (backing or self.metronome_settings.enabled) and not self.output:
             self.pending_take = None
             self.notice("Choose a playback output in Audio settings first.", True)
             self.start_meter()
@@ -603,7 +719,8 @@ class Window(Gtk.ApplicationWindow):
         try:
             self.engine.capture(self.input, self.pair, self.session.path(self.pending_take),
                                 self.session.path(backing) if backing else None,
-                                self.backing_slider.get_value(), self.output)
+                                self.backing_slider.get_value(), self.output,
+                                metronome=self.metronome_settings)
             self.guitar_name.set_text(self.pending_take["name"] + " · recording")
             self.notice("Recording a new take · press R or Esc to stop")
         except Exception as error:
@@ -638,8 +755,8 @@ class Window(Gtk.ApplicationWindow):
             self.engine.pause()
             return
         backing, take = self.session.data.get("backing"), self.session.selected
-        if not backing and not take:
-            self.notice("Add a backing track or record a take first.")
+        if not backing and not take and not self.metronome_settings.enabled:
+            self.notice("Add a backing track, record a take, or enable the metronome.")
             return
         if not self.output:
             self.notice("Choose a playback output in Audio settings first.", True)
@@ -648,7 +765,8 @@ class Window(Gtk.ApplicationWindow):
             self.engine.play(self.session.path(backing) if backing else None,
                              self.session.path(take) if take else None, self.output,
                              self.backing_slider.get_value(), self.guitar_slider.get_value(),
-                             self.position, self.session.data.get("alignment_ms", 0))
+                             self.position, self.session.data.get("alignment_ms", 0),
+                             metronome=self.metronome_settings)
         except Exception as error:
             self.audio_error(str(error))
 
@@ -702,12 +820,15 @@ class Window(Gtk.ApplicationWindow):
             child.set_sensitive(not self.busy and not recording)
         self.record_button.set_sensitive(not self.busy and self.input is not None)
         self.play_button.set_sensitive(not self.busy and not recording and
-                                       bool(self.session.selected or self.session.data.get("backing")))
+                                       bool(self.session.selected or self.session.data.get("backing") or
+                                            self.metronome_settings.enabled))
         self.export_button.set_sensitive(not self.busy and not recording and
                                          bool(self.session.selected or self.session.data.get("backing")))
         self.export_guitar_button.set_sensitive(not self.busy and not recording and bool(self.session.selected))
         self.takes_box.set_sensitive(not self.busy and not recording)
-        for area in (self.backing_wave, self.guitar_wave):
+        for child in (self.metronome_toggle, self.metronome_bpm, self.metronome_slider):
+            child.set_sensitive(not self.busy)
+        for area in (self.backing_wave, self.guitar_wave, self.metronome_wave):
             area.queue_draw()
         return True
 
@@ -850,7 +971,7 @@ class Window(Gtk.ApplicationWindow):
         body = margins(box(vertical=True, spacing=16), 24)
         body.append(label("A little room to play.", ["track-name"]))
         body.append(button("Open saved session…", callback=lambda: (dialog.close(), self.open_session()), classes=["outlined"]))
-        for text in ("Space         Play / pause", "R                 Record / finish take", "Esc              Stop", "Home          Back to start", "Ctrl+O         Add backing track", "Ctrl+N         New session", "Ctrl+E          Export mix"):
+        for text in ("Space         Play / pause", "R                 Record / finish take", "M                Toggle metronome", "Esc              Stop", "Home          Back to start", "Ctrl+O         Add backing track", "Ctrl+N         New session", "Ctrl+E          Export mix"):
             body.append(label(text, ["mono", "small", "muted"]))
         hint = label("Sessions & takes live in ~/Music/Riff.\nNo account. No cloud. Just audio.", ["small", "muted"])
         body.append(hint)
@@ -950,12 +1071,17 @@ class Window(Gtk.ApplicationWindow):
             actions = {Gdk.KEY_o: self.add_backing_dialog, Gdk.KEY_n: self.new_session, Gdk.KEY_e: self.export_dialog}
         else:
             actions = {Gdk.KEY_space: self.play, Gdk.KEY_r: self.record, Gdk.KEY_R: self.record,
+                       Gdk.KEY_m: self.toggle_metronome, Gdk.KEY_M: self.toggle_metronome,
                        Gdk.KEY_Escape: self.stop, Gdk.KEY_Home: lambda: self.seek(0)}
         action = actions.get(key)
         if action:
             action()
             return True
         return False
+
+    def toggle_metronome(self):
+        if not self.busy:
+            self.metronome_toggle.set_active(not self.metronome_toggle.get_active())
 
     def close_request(self, *_):
         if self.busy:

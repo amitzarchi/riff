@@ -21,7 +21,7 @@ class ThemePalette(unittest.TestCase):
                              'accent="#7a7a7a"\nred="#222222"\nyellow="#dddddd"\n')
         palette = theme.colors([self.path])
         self.assertEqual(palette["mode"], "light")
-        for key in ("muted_text", "backing_color", "guitar_color", "error_color"):
+        for key in ("muted_text", "backing_color", "guitar_color", "metronome_color", "error_color"):
             for background in ("background", "dark_background"):
                 self.assertGreaterEqual(theme.contrast(palette[key], palette[background]), 4.5)
         self.assertGreaterEqual(theme.contrast(palette["on_accent"], palette["accent"]), 4.5)

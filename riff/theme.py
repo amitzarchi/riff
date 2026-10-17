@@ -52,6 +52,7 @@ def _tokens(palette):
     c["muted_text"] = _readable(c["dark_foreground"], foreground, (background, surface))
     c["backing_color"] = _readable(c["accent"], foreground, (background, surface))
     c["guitar_color"] = _readable(c["yellow"], foreground, (background, surface))
+    c["metronome_color"] = _readable(c["green"], foreground, (background, surface))
     c["error_color"] = _readable(c["red"], foreground, (background, surface))
     c["on_accent"] = max(("#000000", "#ffffff"), key=lambda text: contrast(text, c["accent"]))
     c["on_record"] = max(("#000000", "#ffffff"), key=lambda text: contrast(text, c["red"]))
@@ -123,10 +124,12 @@ def css(c):
     .riff .lane { background: %(dark_background)s; border: 1px solid %(border)s; }
     .riff .lane.backing-lane { border-left: 2px solid %(backing_color)s; }
     .riff .lane.guitar-lane { border-left: 2px solid %(guitar_color)s; }
+    .riff .lane.metronome-lane { border-left: 2px solid %(metronome_color)s; }
     .riff .lane-controls { border-right: 1px solid %(border)s; padding: 14px; }
     .riff .track-name { font-size: 12px; font-weight: 700; }
     .riff .backing-accent { color: %(backing_color)s; }
     .riff .guitar-accent { color: %(guitar_color)s; }
+    .riff .metronome-accent { color: %(metronome_color)s; }
     .riff .transport { background: %(dark_background)s; border: 1px solid %(border)s; padding: 9px 12px; }
     .riff .footer { background: %(dark_background)s; border-top: 1px solid %(border)s; padding: 9px 18px; }
     .riff .take { background: transparent; border: 1px solid %(border)s; padding: 5px 10px; }
