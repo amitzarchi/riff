@@ -58,6 +58,13 @@ yt-dlp (Deno is installed on this machine).
 6. Select a take, press **Space** to hear it with the backing, and adjust the two
    volume sliders. Export the mix or guitar only as WAV.
 
+Use **×** at the top right of a take to delete it, or **Delete all takes** to clear
+the session's takes. Audio moves to Trash; the backing track stays in place.
+Deleting the selected take stops playback and selects the next remaining take
+(or the previous one at the end). These controls are disabled during recording
+and imports/exports. If Trash is unavailable, removed audio stays in a
+`deleted-takes-…` folder inside the session instead.
+
 Use the timeline's **zoom in / out** buttons or **Ctrl++ / Ctrl+−** to inspect a
 smaller section, down to one second. **Fit** / **Ctrl+0** shows the whole session.
 **Ctrl+scroll** over a track zooms around the pointer. Drag the shared horizontal

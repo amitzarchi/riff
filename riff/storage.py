@@ -99,7 +99,22 @@ class Session:
         session = cls(folder, data)
         # Files are always confined to the session folder.
         for item in [data.get("backing"), *data["takes"]]:
-            if item and (not session.path(item).is_file()):
+            if not item:
+                continue
+            path = session.path(item)
+            if not path.is_file():
+                # A deletion interrupted before its metadata was saved must roll back.
+                for archive in folder.glob("deleted-takes-*"):
+                    staged = archive / path.name
+                    if (not archive.is_symlink() and staged.is_file()
+                            and staged.resolve().parent == archive.resolve()):
+                        staged.replace(path)
+                        try:
+                            archive.rmdir()
+                        except OSError:
+                            pass
+                        break
+            if not path.is_file():
                 raise ValueError(f"Missing session audio: {item.get('file', '?')}")
         # writeframes patches the WAV header on every buffer. A killed process can
         # leave valid audio without its final metadata entry; recover it on open.
@@ -139,8 +154,51 @@ class Session:
 
     def next_take(self):
         ident = uuid4().hex[:10]
+        number = len(self.data["takes"]) + 1
+        names = {take["name"] for take in self.data["takes"]}
+        while f"Take {number:02}" in names:
+            number += 1
         return {"id": ident, "file": f"take-{ident}.wav",
-                "name": f"Take {len(self.data['takes']) + 1:02}", "duration": 0.0}
+                "name": f"Take {number:02}", "duration": 0.0}
+
+    def remove_takes(self, identifiers=None):
+        """Stage deleted audio for Trash, rolling back if moving or saving fails."""
+        takes = self.data["takes"]
+        identifiers = set(identifiers) if identifiers is not None else {take["id"] for take in takes}
+        removed = [take for take in takes if take["id"] in identifiers]
+        if not removed:
+            return None
+        remaining = [take for take in takes if take["id"] not in identifiers]
+        protected = {self.path(take) for take in remaining}
+        if backing := self.data.get("backing"):
+            protected.add(self.path(backing))
+        paths = list(dict.fromkeys(self.path(take) for take in removed))
+        if set(paths) & protected:
+            raise ValueError("Cannot delete audio used by the backing track or another take.")
+        selected = self.data.get("selected")
+        replacement = selected if remaining else None
+        if selected in identifiers:
+            index = next((i for i, take in enumerate(takes) if take["id"] == selected), 0)
+            choices = [take for take in takes[index + 1:] if take["id"] not in identifiers]
+            replacement = (choices[0] if choices else remaining[-1])["id"] if remaining else None
+        archive = self.folder / f"deleted-takes-{uuid4().hex[:10]}"
+        archive.mkdir(mode=0o700)
+        moved = []
+        try:
+            for path in paths:
+                if path.exists():
+                    staged = archive / path.name
+                    path.replace(staged)
+                    moved.append((path, staged))
+            self.data.update(takes=remaining, selected=replacement)
+            self.save()
+        except Exception:
+            self.data.update(takes=takes, selected=selected)
+            for path, staged in reversed(moved):
+                staged.replace(path)
+            archive.rmdir()
+            raise
+        return archive
 
     def commit_take(self, take: dict):
         with wave.open(str(self.path(take)), "rb") as audio:

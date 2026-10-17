@@ -572,6 +572,10 @@ class Window(Gtk.ApplicationWindow):
         take_hint = label("Every take is saved. Keep playing.", ["muted", "small"])
         take_hint.set_ellipsize(Pango.EllipsizeMode.END)
         take_heading.append(take_hint)
+        self.delete_takes_button = button("Delete all takes", callback=self.delete_takes,
+                                          classes=["flat", "small"],
+                                          tooltip="Move every take in this session to Trash")
+        take_heading.append(self.delete_takes_button)
         content.append(take_heading)
         self.takes_box = box(spacing=8)
         takes_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
@@ -853,12 +857,15 @@ class Window(Gtk.ApplicationWindow):
                         peaks = read_peaks(path)
                         GLib.idle_add(self.apply_peaks, area, peaks, version)
                     except (OSError, ValueError) as error:
-                        GLib.idle_add(self.notice, f"Could not read waveform: {error}", True)
+                        GLib.idle_add(self.apply_peaks, area, [], version, str(error))
 
                 threading.Thread(target=worker, daemon=True).start()
 
-    def apply_peaks(self, area, peaks, version):
+    def apply_peaks(self, area, peaks, version, error=None):
         if not self.closed and version == self._peaks_version:
+            if error:
+                self.notice(f"Could not read waveform: {error}", True)
+                return
             area.peaks = peaks
             area.queue_draw()
 
@@ -866,6 +873,8 @@ class Window(Gtk.ApplicationWindow):
         while child := self.takes_box.get_first_child():
             self.takes_box.remove(child)
         self.take_count.set_text(str(len(self.session.data["takes"])))
+        self.delete_takes_button.set_sensitive(bool(self.session.data["takes"]) and
+                                               not self.busy and self.engine.mode != "record")
         if not self.session.data["takes"]:
             self.takes_box.append(label("Hit record to make your first take.", ["muted", "small"]))
         for take in self.session.data["takes"]:
@@ -873,7 +882,46 @@ class Window(Gtk.ApplicationWindow):
             child = button(f"{'●  ' if selected else ''}{take['name']}   {timecode(take['duration'])}",
                            callback=lambda ident=take["id"]: self.select_take(ident),
                            classes=["take", *(["selected"] if selected else [])])
-            self.takes_box.append(child)
+            tile = Gtk.Overlay(child=child, valign=Gtk.Align.CENTER)
+            delete = button("×", callback=lambda ident=take["id"]: self.delete_takes(ident),
+                            classes=["take-delete"], tooltip=f"Delete {take['name']} · move audio to Trash")
+            delete.set_halign(Gtk.Align.END)
+            delete.set_valign(Gtk.Align.START)
+            delete.set_margin_top(3)
+            delete.set_margin_end(3)
+            tile.add_overlay(delete)
+            self.takes_box.append(tile)
+
+    def delete_takes(self, ident=None):
+        if self.busy or self.engine.mode == "record" or self.pending_take is not None:
+            return
+        removed = [take for take in self.session.data["takes"] if ident is None or take["id"] == ident]
+        if not removed:
+            return
+        selected = self.session.data.get("selected")
+        deleting_selected = any(take["id"] == selected for take in removed)
+        if deleting_selected:
+            self.stop(meter=False)
+            self._peaks_version += 1
+        try:
+            archive = self.session.remove_takes([take["id"] for take in removed])
+        except (OSError, ValueError) as error:
+            if deleting_selected:
+                self.refresh_tracks()
+                self.start_meter()
+            self.notice(f"Could not delete takes: {error}", True)
+            return
+        if deleting_selected:
+            self.refresh_tracks()
+            self.start_meter()
+        self.refresh_takes()
+        description = removed[0]["name"] if len(removed) == 1 else f"{len(removed)} takes"
+        try:
+            Gio.File.new_for_path(str(archive)).trash(None)
+        except GLib.Error:
+            self.notice(f"{description} removed · audio kept in {archive.name} (Trash unavailable)")
+        else:
+            self.notice(f"{description} moved to Trash")
 
     def select_take(self, ident):
         if self.busy or self.engine.mode == "record":
@@ -1063,6 +1111,7 @@ class Window(Gtk.ApplicationWindow):
                                          bool(self.session.selected or self.session.data.get("backing")))
         self.export_guitar_button.set_sensitive(not self.busy and not recording and bool(self.session.selected))
         self.takes_box.set_sensitive(not self.busy and not recording)
+        self.delete_takes_button.set_sensitive(not self.busy and not recording and bool(self.session.data["takes"]))
         for child in (self.metronome_toggle, self.metronome_bpm, self.metronome_tap, self.metronome_slider,
                       self.metronome_alignment, self.metronome_reset):
             child.set_sensitive(not self.busy)

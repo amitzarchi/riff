@@ -132,8 +132,10 @@ def css(c):
     .riff .metronome-accent { color: %(metronome_color)s; }
     .riff .transport { background: %(dark_background)s; border: 1px solid %(border)s; padding: 9px 12px; }
     .riff .footer { background: %(dark_background)s; border-top: 1px solid %(border)s; padding: 9px 18px; }
-    .riff .take { background: transparent; border: 1px solid %(border)s; padding: 5px 10px; }
+    .riff .take { background: transparent; border: 1px solid %(border)s; padding: 9px 28px 9px 12px; }
     .riff .take.selected { color: %(guitar_color)s; border-color: %(guitar_color)s; background: %(selected_take)s; }
+    .riff button.take-delete { color: %(muted_text)s; background: transparent; border: none; min-width: 16px; min-height: 16px; padding: 0; font-size: 12px; }
+    .riff button.take-delete:hover { color: %(error_color)s; background: %(hover)s; }
     .riff .error { color: %(error_color)s; }
     .riff .status-dot { color: %(green)s; }
     .riff scale { padding: 6px 0; }
