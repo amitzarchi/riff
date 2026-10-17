@@ -16,6 +16,7 @@ gi.require_version("Gst", "1.0")
 from gi.repository import Gst  # noqa: E402
 
 ALIGNMENT_LIMIT_MS = 60_000
+MAX_GAIN = 2.0
 
 
 class TapTempo:
@@ -53,7 +54,7 @@ class MetronomeSettings:
     def from_session(cls, data):
         return cls(bool(data.get("metronome_enabled", False)),
                    max(40, min(300, int(data.get("metronome_bpm", 120)))),
-                   max(0.0, min(1.0, float(data.get("metronome_gain", 0.3)))),
+                   max(0.0, min(MAX_GAIN, float(data.get("metronome_gain", 0.3)))),
                    max(-ALIGNMENT_LIMIT_MS, min(ALIGNMENT_LIMIT_MS,
                        int(data.get("metronome_alignment_ms", 0)))))
 

@@ -14,7 +14,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 from . import theme  # noqa: E402
 from .audio import Engine, amplitude, devices  # noqa: E402
 from .download import DownloadCancelled, YouTubeDownload  # noqa: E402
-from .metronome import ALIGNMENT_LIMIT_MS, MetronomeSettings, TapTempo  # noqa: E402
+from .metronome import ALIGNMENT_LIMIT_MS, MAX_GAIN, MetronomeSettings, TapTempo  # noqa: E402
 from .timeline import Timeline  # noqa: E402
 from .storage import (PEAK_RATE, STATE_DIR, Session, atomic_json, export_audio,  # noqa: E402
                       import_backing, read_json, read_peaks)
@@ -725,9 +725,9 @@ class Window(Gtk.ApplicationWindow):
                                      classes=["flat"], tooltip="Reset click alignment to 0 ms")
         alignment.append(self.metronome_reset)
         controls.append(alignment)
-        self.metronome_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 0.01)
+        self.metronome_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, MAX_GAIN, 0.01)
         self.metronome_slider.set_draw_value(False)
-        self.metronome_slider.set_tooltip_text("Click volume · never recorded or exported")
+        self.metronome_slider.set_tooltip_text("Click volume · up to 200% (+6 dB) · never recorded or exported")
         self.metronome_slider.connect("value-changed", self.metronome_changed)
         controls.append(self.metronome_slider)
         row.append(controls)

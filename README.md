@@ -35,7 +35,8 @@ yt-dlp (Deno is installed on this machine).
    (WAV, MP3, FLAC, Ogg, M4A, and other FFmpeg formats).
    A backing track is optional; a track playing in another app can accompany guitar-only recording.
 4. Optionally turn on the permanent **Metronome** track (**M**), set its BPM and
-   click volume. It follows playback and recording in 4/4, accenting the first beat.
+   click volume (up to 200%, or +6 dB). It follows playback and recording in 4/4,
+   accenting the first beat.
    The click is monitor only: it never enters a take, the mix export, or guitar export.
    Use **Align** to shift clicks against the backing: negative milliseconds move them
    earlier, positive values delay them. The range is −60,000 to +60,000 ms. The −/+

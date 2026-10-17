@@ -8,7 +8,7 @@ import unittest
 import wave
 
 from riff.audio import Device, Engine, Gst
-from riff.metronome import ClickSource, MetronomeSettings
+from riff.metronome import MAX_GAIN, ClickSource, MetronomeSettings
 from riff.storage import RATE, Session, export_audio, import_backing
 from test_audio import pcm16, spin_until
 
@@ -77,6 +77,18 @@ class MetronomeIntegration(unittest.TestCase):
         self.assertLess(max(abs(a - b * settings.gain) for a, b in zip(rendered, expected)), 0.00001)
         muted, _ = self.render(backing, metronome=MetronomeSettings(False))
         self.assertEqual(max(abs(value) for value in muted), 0)
+
+    def test_boosted_click_doubles_the_previous_maximum_without_clipping(self):
+        backing = self.silence()
+        previous, _ = self.render(backing, metronome=MetronomeSettings(True, gain=1.0))
+        settings = MetronomeSettings.from_session({"metronome_enabled": True, "metronome_gain": MAX_GAIN})
+        boosted, _ = self.render(backing, metronome=settings)
+        self.assertEqual(len(boosted), len(previous))
+        self.assertLess(max(abs(a - b * 2) for a, b in zip(boosted, previous)), 0.00001)
+        peak = max(map(abs, boosted))
+        self.assertGreater(peak, 0.8)
+        self.assertLess(peak, 1.0)
+        self.assertEqual(MetronomeSettings.from_session({"metronome_gain": 99}).gain, MAX_GAIN)
 
     def test_alignment_moves_clicks_earlier_and_later_without_extending_backing(self):
         for offset, duration, expected in ((125, 1.1, [0.125, 0.625]),
@@ -183,7 +195,7 @@ class MetronomeIntegration(unittest.TestCase):
 
     def test_recording_and_both_exports_exclude_the_click(self):
         session = Session.new(self.root)
-        session.data.update(metronome_enabled=True, metronome_bpm=240, metronome_gain=0.6,
+        session.data.update(metronome_enabled=True, metronome_bpm=240, metronome_gain=MAX_GAIN,
                             metronome_alignment_ms=125)
         session.data["backing"] = import_backing(self.silence(0.25), session)
         take = session.next_take()
@@ -203,7 +215,7 @@ class MetronomeIntegration(unittest.TestCase):
         spin_until(lambda: self.engine.position > 0.8 or self.errors)
         self.engine.stop()
         self.assertEqual(self.errors, [])
-        self.assertGreater(max(peaks), 0.1)
+        self.assertGreater(max(peaks), 0.8)
         self.assertTrue(session.commit_take(take))
         self.assertLessEqual(max(abs(v) for v in pcm16(session.path(take))), 1)
         for guitar_only in (False, True):
@@ -211,7 +223,7 @@ class MetronomeIntegration(unittest.TestCase):
             export_audio(session, destination, guitar_only=guitar_only)
             self.assertLessEqual(max(abs(v) for v in pcm16(destination)), 1)
         restored = MetronomeSettings.from_session(Session.open(session.folder).data)
-        self.assertEqual(restored, MetronomeSettings(True, 240, 0.6, 125))
+        self.assertEqual(restored, MetronomeSettings(True, 240, MAX_GAIN, 125))
         self.assertEqual(MetronomeSettings.from_session({}), MetronomeSettings())
 
     def test_offset_recording_click_uses_the_absolute_session_beats(self):
