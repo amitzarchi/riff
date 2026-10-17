@@ -476,10 +476,10 @@ class Window(Gtk.ApplicationWindow):
         brand = box(spacing=10, children=[logo, label("riff", ["brand"])])
         header.pack_start(brand)
         header.set_title_widget(Gtk.Box())
-        self.folder_button = button(icon="folder-open-symbolic", callback=self.open_folder,
+        self.folder_button = button(icon="phosphor-folder-open-symbolic", callback=self.open_folder,
                                     classes=["flat"], tooltip="Show session files")
-        header.pack_end(button(icon="open-menu-symbolic", callback=self.show_menu, classes=["flat"], tooltip="Session & shortcuts"))
-        header.pack_end(button(icon="emblem-system-symbolic", callback=self.audio_settings, classes=["flat"], tooltip="Audio settings"))
+        header.pack_end(button(icon="phosphor-list-symbolic", callback=self.show_menu, classes=["flat"], tooltip="Session & shortcuts"))
+        header.pack_end(button(icon="phosphor-gear-six-symbolic", callback=self.audio_settings, classes=["flat"], tooltip="Audio settings"))
         header.pack_end(self.folder_button)
         self.set_titlebar(header)
         root = box(vertical=True)

@@ -17,6 +17,8 @@ riff
 Or run `./run` directly. Installation adds a **Riff** desktop launcher and
 `~/.local/bin/riff`; the source stays in this directory.
 The header and launcher use `assets/wave-triangle.svg` as a theme-adaptive symbolic icon.
+The three header actions use bundled [Phosphor Icons](https://github.com/phosphor-icons/core)
+in regular weight; their MIT license is in `assets/PHOSPHOR-LICENSE`.
 
 Runtime packages on Arch: `python`, `python-gobject`, `python-cairo`, `gtk4`,
 `gstreamer`, `gst-plugin-pipewire`, `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`, `gst-libav`,
