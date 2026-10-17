@@ -37,7 +37,12 @@ yt-dlp (Deno is installed on this machine).
 4. Optionally turn on the permanent **Metronome** track (**M**), set its BPM and
    click volume. It follows playback and recording in 4/4, accenting the first beat.
    The click is monitor only: it never enters a take, the mix export, or guitar export.
-   BPM, volume, and on/off are saved with the session and can be changed while playing.
+   Use **Align** to shift clicks against the backing: negative milliseconds move them
+   earlier, positive values delay them. The range is −60,000 to +60,000 ms, in 1 ms
+   steps; type a value for a longer intro, or use the reset button to return to zero.
+   Set the BPM to match the backing, then adjust Align until the beats line up.
+   The beat grid follows the offset. BPM, alignment, volume, and on/off are saved
+   with the session and can be changed during playback or recording.
    You can also press **Space** with just the metronome enabled to practice without audio files.
 5. Press **R** to record. The backing starts at the beginning, and a new stereo take
    is saved at **48 kHz / 24-bit**. Press **R** or **Esc** to finish.
@@ -66,8 +71,9 @@ the numbered USB channel order. Normal microphone inputs use PulseAudio capture.
 - One backing track and one selected guitar take; every new recording keeps previous takes.
 - Play/pause, stop, seek, rewind, and playback repeat. Recording always starts at zero.
 - Two playback/export volume sliders. The recorded guitar WAV remains unaltered.
-- A permanent, optional metronome lane: 40–300 BPM, separate click volume, and a
-  beat grid following the transport. It is off by default and excluded from every export.
+- A permanent, optional metronome lane: 40–300 BPM, millisecond alignment, separate
+  click volume, and a beat grid following the transport. It is off by default and
+  excluded from every export.
 - A live input meter with a clipping indicator and real waveform envelopes.
 - Session name, new/open session, and a button to show the session's files.
 - Optional guitar alignment from −500 to +500 ms, applied to playback and export.
@@ -141,9 +147,10 @@ selection, simultaneous recording/backing playback, transport controls, WAV
 format/duration, positive and negative alignment in playback and export, and
 interrupted-session recovery. They use fake audio sinks and never open a microphone.
 Metronome checks render the actual monitoring output to verify sample timing,
-downbeat accents, pause/seek/repeat, live tempo/volume/mute changes, and finite
-playback duration. A silent generated input stays silent in the recorded take and
-both exports while the monitoring mix contains audible clicks. Native GTK previews
+downbeat accents, positive/negative offsets, pause/seek/repeat, live changes to
+tempo/alignment/volume/mute, and finite playback duration. A silent generated input
+stays silent in the recorded take and both exports while the monitoring mix contains
+audible clicks. Native GTK previews
 also exercise the controls during recording and playback in light and dark themes.
 
 An opt-in regression checks actual PipeWire channel negotiation using temporary

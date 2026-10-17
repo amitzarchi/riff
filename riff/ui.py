@@ -14,7 +14,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 from . import theme  # noqa: E402
 from .audio import Engine, amplitude, devices  # noqa: E402
 from .download import DownloadCancelled, YouTubeDownload  # noqa: E402
-from .metronome import MetronomeSettings  # noqa: E402
+from .metronome import ALIGNMENT_LIMIT_MS, MetronomeSettings  # noqa: E402
 from .storage import (PEAK_RATE, STATE_DIR, Session, atomic_json, export_audio,  # noqa: E402
                       import_backing, read_json, read_peaks)
 
@@ -143,23 +143,26 @@ class BeatGrid(Waveform):
         settings = self.window.metronome_settings
         total, position = self.window.duration, self.window.position
         left, span, period = 20, max(1, width - 40), 60 / settings.bpm
+        offset = settings.alignment_ms / 1000
         spacing = span * period / total
         stride = max(1, math.ceil(10 / spacing))
         if stride > 1:
             stride = math.ceil(stride / 4) * 4
         active = settings.enabled and self.window.engine.mode in ("record", "play")
-        current = math.floor(position / period)
+        current = math.floor((position - offset) / period)
         cr.select_font_face("monospace", 0, 0)
         cr.set_font_size(9)
-        for beat in range(0, math.floor(total / period) + 1, stride):
-            x = left + beat * period / total * span
+        first = max(0, math.ceil(-offset / period))
+        first = math.ceil(first / stride) * stride
+        for beat in range(first, math.floor((total - offset) / period) + 1, stride):
+            x = left + (offset + beat * period) / total * span
             downbeat = beat % 4 == 0
             color("metronome_color", (0.9 if downbeat else 0.45) if settings.enabled else 0.2)
             cr.set_line_width(2 if downbeat else 1)
             cr.move_to(x + 0.5, 36 if downbeat else 48)
             cr.line_to(x + 0.5, height - 36)
             cr.stroke()
-            if active and beat == current and position % period < 0.12:
+            if active and beat == current and (position - offset) % period < 0.12:
                 color("metronome_color", 0.18)
                 cr.rectangle(x, 30, min(spacing, 22), height - 60)
                 cr.fill()
@@ -559,6 +562,20 @@ class Window(Gtk.ApplicationWindow):
         self.metronome_toggle.connect("toggled", self.metronome_changed)
         tempo.append(self.metronome_toggle)
         controls.append(tempo)
+        alignment = box(spacing=6, children=[label("Align", ["small", "muted"])])
+        self.metronome_alignment = Gtk.SpinButton.new_with_range(-ALIGNMENT_LIMIT_MS, ALIGNMENT_LIMIT_MS, 1)
+        self.metronome_alignment.set_width_chars(6)
+        self.metronome_alignment.set_numeric(True)
+        self.metronome_alignment.get_adjustment().set_page_increment(100)
+        self.metronome_alignment.set_tooltip_text("Click alignment in milliseconds · − earlier / + later")
+        self.metronome_alignment.connect("value-changed", self.metronome_changed)
+        alignment.append(self.metronome_alignment)
+        alignment.append(label("ms", ["small", "muted"]))
+        self.metronome_reset = button(icon="edit-undo-symbolic",
+                                     callback=lambda: self.metronome_alignment.set_value(0),
+                                     classes=["flat"], tooltip="Reset click alignment to 0 ms")
+        alignment.append(self.metronome_reset)
+        controls.append(alignment)
         self.metronome_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 0.01)
         self.metronome_slider.set_draw_value(False)
         self.metronome_slider.set_tooltip_text("Click volume · never recorded or exported")
@@ -580,7 +597,8 @@ class Window(Gtk.ApplicationWindow):
         self.metronome_toggle.set_label("On" if enabled else "Off")
         self.session.data.update(metronome_enabled=enabled,
                                  metronome_bpm=self.metronome_bpm.get_value_as_int(),
-                                 metronome_gain=self.metronome_slider.get_value())
+                                 metronome_gain=self.metronome_slider.get_value(),
+                                 metronome_alignment_ms=self.metronome_alignment.get_value_as_int())
         self.engine.set_metronome(self.metronome_settings)
         if not enabled and self.engine.mode in ("play", "pause") and not (
                 self.session.selected or self.session.data.get("backing")):
@@ -624,6 +642,7 @@ class Window(Gtk.ApplicationWindow):
         metronome = self.metronome_settings
         self.metronome_bpm.set_value(metronome.bpm)
         self.metronome_slider.set_value(metronome.gain)
+        self.metronome_alignment.set_value(metronome.alignment_ms)
         self.metronome_toggle.set_active(metronome.enabled)
         self.metronome_toggle.set_label("On" if metronome.enabled else "Off")
         self._loading = False
@@ -826,7 +845,8 @@ class Window(Gtk.ApplicationWindow):
                                          bool(self.session.selected or self.session.data.get("backing")))
         self.export_guitar_button.set_sensitive(not self.busy and not recording and bool(self.session.selected))
         self.takes_box.set_sensitive(not self.busy and not recording)
-        for child in (self.metronome_toggle, self.metronome_bpm, self.metronome_slider):
+        for child in (self.metronome_toggle, self.metronome_bpm, self.metronome_slider,
+                      self.metronome_alignment, self.metronome_reset):
             child.set_sensitive(not self.busy)
         for area in (self.backing_wave, self.guitar_wave, self.metronome_wave):
             area.queue_draw()

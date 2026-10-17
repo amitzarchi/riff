@@ -187,7 +187,7 @@ class Engine:
         try:
             def configure(pipeline):
                 if monitor_metronome:
-                    self.click_source = ClickSource(metronome.bpm, self.record_limit)
+                    self.click_source = ClickSource(metronome.bpm, self.record_limit, metronome.alignment_ms)
                     self.click_source.attach(pipeline.get_by_name("metronome_source"))
 
             self._launch(description, "record" if path else "meter", configure)
@@ -269,7 +269,7 @@ class Engine:
                 if take and alignment_ms:
                     pipeline.get_by_name("mix").get_static_pad("sink_1").set_offset(alignment_ms * Gst.MSECOND)
                 if metronome is not None:
-                    self.click_source = ClickSource(metronome.bpm, duration)
+                    self.click_source = ClickSource(metronome.bpm, duration, metronome.alignment_ms)
                     self.click_source.attach(pipeline.get_by_name("metronome_source"))
 
             self._launch(description, "play", configure, position)
@@ -285,6 +285,7 @@ class Engine:
     def set_metronome(self, settings):
         if self.click_source:
             self.click_source.bpm = settings.bpm
+            self.click_source.alignment_ms = settings.alignment_ms
         element = self.pipeline.get_by_name("metronome_volume") if self.pipeline else None
         if element:
             element.set_property("volume", settings.gain)

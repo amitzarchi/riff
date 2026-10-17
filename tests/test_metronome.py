@@ -46,6 +46,15 @@ class MetronomeIntegration(unittest.TestCase):
         self.engine.stop()
         return rendered, timestamps
 
+    def click_times(self, samples):
+        onsets, previous = [], -RATE
+        for frame, value in enumerate(samples[::2]):
+            if abs(value) > 0.01:
+                if frame - previous > RATE * 0.03:
+                    onsets.append(frame / RATE)
+                previous = frame
+        return onsets
+
     def test_click_timing_accent_and_no_cumulative_drift(self):
         click = ClickSource(137)
         period = RATE * 60 / 137
@@ -69,6 +78,56 @@ class MetronomeIntegration(unittest.TestCase):
         muted, _ = self.render(backing, metronome=MetronomeSettings(False))
         self.assertEqual(max(abs(value) for value in muted), 0)
 
+    def test_alignment_moves_clicks_earlier_and_later_without_extending_backing(self):
+        for offset, duration, expected in ((125, 1.1, [0.125, 0.625]),
+                                           (-125, 1.1, [0.375, 0.875]),
+                                           (3000, 3.6, [3, 3.5]),
+                                           (-3000, 1.1, [0, 0.5, 1])):
+            with self.subTest(offset=offset):
+                backing = self.silence(duration)
+                rendered, _ = self.render(backing, metronome=MetronomeSettings(True, 120, 0.5, offset))
+                actual = self.click_times(rendered)
+                self.assertEqual(len(actual), len(expected), actual)
+                for onset, wanted in zip(actual, expected):
+                    self.assertAlmostEqual(onset, wanted, delta=0.0005)
+                self.assertAlmostEqual(len(rendered) / 2 / RATE, duration, delta=0.0001)
+        # Seeking uses the same shifted timeline, rather than restarting the beat.
+        rendered, timestamps = self.render(self.silence(), position=0.6,
+                                          metronome=MetronomeSettings(True, 120, 0.5, 125))
+        self.assertAlmostEqual(timestamps[0], 0.6, delta=0.001)
+        self.assertAlmostEqual(self.click_times(rendered)[0], 0.025, delta=0.0005)
+        # At a non-integer sample period, a long-running shifted beat stays aligned.
+        click = ClickSource(137, alignment_ms=-125)
+        position = round(10001 * RATE * 60 / 137) - 6000
+        samples = array("f", click.render(position - 10, 1000))
+        self.assertAlmostEqual(self.click_times(samples)[0], 10 / RATE, delta=0.0005)
+
+    def test_live_alignment_changes_keep_the_existing_transport(self):
+        buffers = []
+        self.engine.play(None, None, None,
+                         test_sink="fakesink name=monitor sync=true signal-handoffs=true",
+                         metronome=MetronomeSettings(True, 120, 0.5))
+        pipeline = self.engine.pipeline
+
+        def receive(_sink, buffer, _pad):
+            samples = array("f", buffer.extract_dup(0, buffer.get_size()))
+            buffers.append((buffer.pts / Gst.SECOND, max(abs(v) for v in samples)))
+
+        pipeline.get_by_name("monitor").connect("handoff", receive)
+        spin_until(lambda: self.engine.position > 0.15 or self.errors)
+        self.engine.set_metronome(MetronomeSettings(True, 120, 0.5, 125))
+        spin_until(lambda: self.engine.position > 0.7 or self.errors)
+        delayed = [pts for pts, peak in buffers if 0.2 < pts < 0.7 and peak > 0.01]
+        self.assertTrue(delayed)
+        self.assertAlmostEqual(min(delayed), 0.625, delta=0.012)
+        self.engine.set_metronome(MetronomeSettings(True, 120, 0.5, -125))
+        spin_until(lambda: self.engine.position > 1.05 or self.errors)
+        earlier = [pts for pts, peak in buffers if 0.75 < pts < 1.05 and peak > 0.01]
+        self.assertTrue(earlier)
+        self.assertAlmostEqual(min(earlier), 0.875, delta=0.012)
+        self.assertIs(self.engine.pipeline, pipeline)
+        self.assertEqual(self.errors, [])
+
     def test_seek_loop_and_alignment_share_the_audio_timeline(self):
         backing = self.silence()
         rendered, timestamps = self.render(backing, position=0.6, metronome=MetronomeSettings(True))
@@ -81,7 +140,7 @@ class MetronomeIntegration(unittest.TestCase):
         # A repeat is a flushing seek back to zero on the existing pipeline.
         self.ended = False
         self.engine.play(backing, None, None, test_sink="fakesink sync=true",
-                         metronome=MetronomeSettings(True))
+                         metronome=MetronomeSettings(True, alignment_ms=125))
         pipeline = self.engine.pipeline
         spin_until(lambda: self.ended or self.errors)
         self.ended = False
@@ -124,7 +183,8 @@ class MetronomeIntegration(unittest.TestCase):
 
     def test_recording_and_both_exports_exclude_the_click(self):
         session = Session.new(self.root)
-        session.data.update(metronome_enabled=True, metronome_bpm=240, metronome_gain=0.6)
+        session.data.update(metronome_enabled=True, metronome_bpm=240, metronome_gain=0.6,
+                            metronome_alignment_ms=125)
         session.data["backing"] = import_backing(self.silence(0.25), session)
         take = session.next_take()
         peaks = []
@@ -139,6 +199,7 @@ class MetronomeIntegration(unittest.TestCase):
             peaks.append(max(abs(v) for v in samples))
 
         self.engine.pipeline.get_by_name("monitor").connect("handoff", receive)
+        self.assertEqual(self.engine.click_source.alignment_ms, 125)
         spin_until(lambda: self.engine.position > 0.8 or self.errors)
         self.engine.stop()
         self.assertEqual(self.errors, [])
@@ -150,7 +211,7 @@ class MetronomeIntegration(unittest.TestCase):
             export_audio(session, destination, guitar_only=guitar_only)
             self.assertLessEqual(max(abs(v) for v in pcm16(destination)), 1)
         restored = MetronomeSettings.from_session(Session.open(session.folder).data)
-        self.assertEqual(restored, MetronomeSettings(True, 240, 0.6))
+        self.assertEqual(restored, MetronomeSettings(True, 240, 0.6, 125))
         self.assertEqual(MetronomeSettings.from_session({}), MetronomeSettings())
 
 

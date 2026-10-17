@@ -43,7 +43,8 @@ class Session:
         session = cls(folder, {"version": 1, "name": f"Session · {now:%d %b}",
                                "backing": None, "takes": [], "selected": None,
                                "backing_gain": 0.65, "guitar_gain": 1.0, "alignment_ms": 0,
-                               "metronome_enabled": False, "metronome_bpm": 120, "metronome_gain": 0.3})
+                               "metronome_enabled": False, "metronome_bpm": 120, "metronome_gain": 0.3,
+                               "metronome_alignment_ms": 0})
         session.save()
         return session
 
