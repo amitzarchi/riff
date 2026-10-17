@@ -71,11 +71,12 @@ def source(camera, override=None):
             f"video/x-raw,format=I420,width={WIDTH},height={HEIGHT},framerate={FPS}/1,pixel-aspect-ratio=1/1")
 
 
-def preview_sink(override=None):
+def preview_sink(override=None, sync=False):
     if override:
         return override
     require_elements("gtk4paintablesink")
-    return "gtk4paintablesink name=camera_preview sync=false async=false"
+    return (f"gtk4paintablesink name=camera_preview sync={'true' if sync else 'false'} "
+            f"async={'true' if sync else 'false'}")
 
 
 def paintable(pipeline):
@@ -136,3 +137,80 @@ class Preview:
             self.bus = None
         if pipeline:
             pipeline.set_state(Gst.State.NULL)
+
+
+class Playback(Preview):
+    """Play only the recorded picture, following the session audio transport."""
+
+    def __init__(self, on_error=lambda message: None):
+        super().__init__(on_error)
+        self.playing, self.ended, self.duration = False, False, 0.0
+
+    def start(self, path, clock=None, test_sink=None):
+        self.stop()
+        require_elements("matroskademux", "vp8dec")
+        try:
+            self.pipeline = Gst.parse_launch(
+                f"filesrc location={json.dumps(str(path))} ! matroskademux name=take_demux "
+                "take_demux.video_0 ! queue ! vp8dec ! videoconvert ! " + preview_sink(test_sink, sync=True) +
+                " take_demux.audio_0 ! queue ! fakesink sync=false async=false")
+            if clock:
+                self.pipeline.use_clock(clock)
+            self.bus = self.pipeline.get_bus()
+            self.bus.add_signal_watch()
+            self.bus.connect("message", self._message)
+            self.pipeline.set_state(Gst.State.PAUSED)
+            if self.pipeline.get_state(2 * Gst.SECOND)[0] == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Could not open the recorded take video.")
+            success, duration = self.pipeline.query_duration(Gst.Format.TIME)
+            self.duration = duration / Gst.SECOND if success else 0.0
+            return paintable(self.pipeline)
+        except Exception:
+            self.stop()
+            raise
+
+    @property
+    def position(self):
+        if self.pipeline:
+            sink = self.pipeline.get_by_name("camera_preview")
+            success, position = sink.query_position(Gst.Format.TIME) if sink else (False, 0)
+            return position / Gst.SECOND if success else 0.0
+        return 0.0
+
+    def _set_playing(self, playing):
+        if self.playing != playing:
+            self.pipeline.set_state(Gst.State.PLAYING if playing else Gst.State.PAUSED)
+            self.playing = playing
+
+    def sync(self, position, start, mode, force=False):
+        if not self.pipeline:
+            return None
+        if not self.duration:
+            success, duration = self.pipeline.query_duration(Gst.Format.TIME)
+            self.duration = duration / Gst.SECOND if success else 0.0
+        relative = position - start
+        if relative < 0:
+            self._set_playing(False)
+            return "before"
+        if self.duration and relative >= self.duration:
+            self._set_playing(False)
+            return "after"
+        if force or self.ended or abs(self.position - relative) > 0.05:
+            self.pipeline.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.ACCURATE,
+                                      round(max(0, relative) * Gst.SECOND))
+            self.ended = False
+        self._set_playing(mode == "play")
+        return "playing" if mode == "play" else "paused"
+
+    def _message(self, bus, message):
+        if bus != self.bus:
+            return
+        if message.type == Gst.MessageType.EOS:
+            self.ended = True
+            self._set_playing(False)
+        else:
+            super()._message(bus, message)
+
+    def stop(self):
+        super().stop()
+        self.playing, self.ended, self.duration = False, False, 0.0

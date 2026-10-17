@@ -79,8 +79,14 @@ current volumes and alignment; the metronome and webcam microphone are excluded.
 Both streams share a clock. Recording starts from the saved start marker, with
 the video starting at the beginning of the captured performance and the WAV
 retaining the leading silence used for timeline alignment. Video takes show a
-**Video** label; select one and use **Open take video** in the camera panel to watch
-it in your video player. The video keeps the mix as recorded; the WAV remains editable.
+**Video** label. Playing a take automatically shows its recorded video in the
+right panel, including when Webcam recording mode is off. Video follows pause,
+seeking, repeat, the saved start marker, and guitar alignment. The session's current
+audio mix plays once; the clip's embedded audio stays silent. Before/after the
+recorded segment, the panel shows its start/end status while backing playback
+continues. Stop returns to the live camera preview when Webcam is on, or hides
+the panel when it is off. **Open take video** still opens the saved clip externally.
+The saved video keeps the mix as recorded; the WAV remains editable.
 Camera selection and webcam mode stay fixed while recording. If a camera fails,
 Riff preserves the audio captured so far. Audio-only operation does not need a camera.
 

@@ -56,6 +56,15 @@ class Transport:
     def start_meter(self):
         pass
 
+    def stop_take_video(self):
+        pass
+
+    def start_take_video(self, take):
+        pass
+
+    def sync_take_video(self, *args, **kwargs):
+        pass
+
     def ended(self):
         self.ends += 1
         self.audio_end()

@@ -16,7 +16,7 @@ from .audio import Engine, amplitude, devices  # noqa: E402
 from .download import DownloadCancelled, YouTubeDownload  # noqa: E402
 from .metronome import ALIGNMENT_LIMIT_MS, MAX_GAIN, MetronomeSettings, TapTempo  # noqa: E402
 from .timeline import Timeline  # noqa: E402
-from .webcam import Preview, Recording, cameras  # noqa: E402
+from .webcam import Playback, Preview, Recording, cameras  # noqa: E402
 from .storage import (PEAK_RATE, STATE_DIR, Session, atomic_json, export_audio,  # noqa: E402
                       import_backing, read_json, read_peaks)
 
@@ -391,6 +391,8 @@ class Window(Gtk.ApplicationWindow):
         self.settings = read_json(STATE_DIR / "settings.json")
         self.engine = Engine(self.audio_error, self.audio_end)
         self.camera_preview = Preview(self.webcam_error)
+        self.take_video = Playback(self.take_video_error)
+        self.showing_take_video = False
         self.camera_devices, self.camera = [], None
         self.webcam_enabled, self._camera_loading = False, False
         self.inputs, self.outputs = devices()
@@ -646,8 +648,9 @@ class Window(Gtk.ApplicationWindow):
         panel = margins(box(vertical=True, spacing=12), 16)
         panel.add_css_class("webcam-panel")
         panel.set_size_request(240, -1)
-        panel.append(label("WEBCAM", ["eyebrow"]))
-        controls = box(spacing=8)
+        self.camera_heading = label("WEBCAM", ["eyebrow"])
+        panel.append(self.camera_heading)
+        controls = self.camera_controls = box(spacing=8)
         self.camera_select = Gtk.DropDown(hexpand=True)
         self.camera_select.set_tooltip_text("Camera input")
         self.camera_select.connect("notify::selected", self.camera_selected)
@@ -698,9 +701,10 @@ class Window(Gtk.ApplicationWindow):
         ratio = self.settings.get("webcam_split", 0.5)
         self.webcam_enabled = toggle.get_active()
         self.settings["webcam_enabled"] = self.webcam_enabled
-        self.audio_content_scroll.set_policy(Gtk.PolicyType.AUTOMATIC if self.webcam_enabled else Gtk.PolicyType.NEVER,
-                                              Gtk.PolicyType.AUTOMATIC)
-        self.webcam_panel.set_visible(self.webcam_enabled)
+        self.show_webcam_panel(self.webcam_enabled or self.showing_take_video)
+        if self.showing_take_video:
+            self.save()
+            return
         if self.webcam_enabled:
             self.refresh_cameras()
             GLib.idle_add(self.position_webcam_panel, ratio)
@@ -711,17 +715,17 @@ class Window(Gtk.ApplicationWindow):
         self.save()
 
     def position_webcam_panel(self, ratio):
-        if not self.closed and self.webcam_enabled:
+        if not self.closed and self.webcam_panel.get_visible():
             self.workspace.set_position(round(self.workspace.get_width() * max(0.15, min(0.85, ratio))))
         return False
 
     def webcam_split_changed(self, *_):
         width = self.workspace.get_width()
-        if self.webcam_enabled and width > 0:
+        if self.webcam_panel.get_visible() and width > 0:
             self.settings["webcam_split"] = max(0.15, min(0.85, self.workspace.get_position() / width))
 
     def refresh_cameras(self):
-        if self.busy or self.engine.mode == "record" or not self.webcam_enabled:
+        if self.busy or self.engine.mode == "record" or not self.webcam_enabled or self.showing_take_video:
             return
         self.camera_preview.stop()
         try:
@@ -740,7 +744,7 @@ class Window(Gtk.ApplicationWindow):
         self.camera_selected()
 
     def camera_selected(self, *_):
-        if self._camera_loading or self.engine.mode == "record" or self.busy:
+        if self._camera_loading or self.engine.mode == "record" or self.busy or self.showing_take_video:
             return
         index = self.camera_select.get_selected()
         self.camera = self.camera_devices[index] if index < len(self.camera_devices) else None
@@ -750,7 +754,7 @@ class Window(Gtk.ApplicationWindow):
         self.start_webcam_preview()
 
     def start_webcam_preview(self):
-        if self.closed or not self.webcam_enabled or self.engine.mode == "record":
+        if self.closed or not self.webcam_enabled or self.engine.mode == "record" or self.showing_take_video:
             return False
         self.camera_picture.set_paintable(None)
         self.camera_placeholder.set_visible(True)
@@ -775,6 +779,66 @@ class Window(Gtk.ApplicationWindow):
         self.camera_placeholder.set_visible(True)
         self.camera_status.set_text("Camera unavailable · select an input or press Refresh")
         self.notice(f"Camera: {message}", True)
+
+    def show_webcam_panel(self, visible):
+        was_visible = self.webcam_panel.get_visible()
+        self.audio_content_scroll.set_policy(Gtk.PolicyType.AUTOMATIC if visible else Gtk.PolicyType.NEVER,
+                                              Gtk.PolicyType.AUTOMATIC)
+        self.webcam_panel.set_visible(visible)
+        if visible and not was_visible:
+            GLib.idle_add(self.position_webcam_panel, self.settings.get("webcam_split", 0.5))
+
+    def start_take_video(self, take):
+        path = self.session.video_path(take)
+        if not path or not path.is_file():
+            return
+        self.showing_take_video = True
+        self.camera_preview.stop()
+        self.camera_picture.set_paintable(None)
+        self.camera_controls.set_visible(False)
+        self.camera_heading.set_text("TAKE VIDEO")
+        self.show_webcam_panel(True)
+        try:
+            preview = self.take_video.start(path, clock=self.engine.pipeline.get_clock())
+            self.camera_picture.set_paintable(preview)
+            self.sync_take_video()
+        except (GLib.Error, RuntimeError) as error:
+            self.take_video_error(str(error))
+
+    def sync_take_video(self, position=None, force=False):
+        take = self.session.selected
+        if not self.showing_take_video or not take or not self.take_video.pipeline:
+            return
+        start = take.get("video_start", 0.0) + self.session.data.get("alignment_ms", 0) / 1000
+        state = self.take_video.sync(self.engine.position if position is None else position,
+                                     start, self.engine.mode, force=force)
+        self.camera_placeholder.set_visible(state in ("before", "after"))
+        if state == "before":
+            self.camera_placeholder.set_text(f"Video starts at {timecode(start, True)}")
+        elif state == "after":
+            self.camera_placeholder.set_text("End of take video")
+        self.camera_status.set_text(f"{take['name']} · {'Paused' if self.engine.mode == 'pause' else 'Playing'}")
+
+    def take_video_error(self, message):
+        if self.closed:
+            return
+        self.camera_picture.set_paintable(None)
+        self.camera_placeholder.set_text(message)
+        self.camera_placeholder.set_visible(True)
+        self.camera_status.set_text("Take video unavailable · audio playback continues")
+        self.notice(f"Take video: {message}", True)
+
+    def stop_take_video(self):
+        self.take_video.stop()
+        if not self.showing_take_video:
+            return
+        self.showing_take_video = False
+        self.camera_picture.set_paintable(None)
+        self.camera_controls.set_visible(True)
+        self.camera_heading.set_text("WEBCAM")
+        self.show_webcam_panel(self.webcam_enabled)
+        if self.webcam_enabled and not self.closed:
+            GLib.idle_add(self.start_webcam_preview if self.camera else self.refresh_cameras)
 
     def open_take_video(self):
         if self.busy or self.engine.mode == "record":
@@ -1124,6 +1188,10 @@ class Window(Gtk.ApplicationWindow):
         if not self.input:
             self.notice("Choose an input in Audio settings first.", True)
             return
+        if self.showing_take_video:
+            self.stop_take_video()
+            if self.webcam_enabled:
+                self.start_webcam_preview()
         if self.webcam_enabled and (not self.camera or not self.camera_preview.pipeline):
             self.notice("Choose a working camera, press Refresh, or turn Webcam off to record audio only.", True)
             return
@@ -1162,6 +1230,7 @@ class Window(Gtk.ApplicationWindow):
             self.notice(str(error), True)
 
     def finish_take(self):
+        self.stop_take_video()
         self.engine.stop()
         recorded = self.engine.frames
         if self.pending_take:
@@ -1204,6 +1273,7 @@ class Window(Gtk.ApplicationWindow):
             return
         if self.engine.mode in ("play", "pause"):
             self.engine.pause()
+            self.sync_take_video(force=True)
             return
         backing, take = self.session.data.get("backing"), self.session.selected
         if not backing and not take and not self.metronome_settings.enabled:
@@ -1213,11 +1283,14 @@ class Window(Gtk.ApplicationWindow):
             self.notice("Choose a playback output in Audio settings first.", True)
             return
         try:
+            self.stop_take_video()
             self.engine.play(self.session.path(backing) if backing else None,
                              self.session.path(take) if take else None, self.output,
                              self.backing_slider.get_value(), self.guitar_slider.get_value(),
                              self.position, self.session.data.get("alignment_ms", 0),
                              metronome=self.metronome_settings)
+            if take:
+                self.start_take_video(take)
         except Exception as error:
             self.audio_error(str(error))
 
@@ -1245,6 +1318,7 @@ class Window(Gtk.ApplicationWindow):
             return
         self.position = max(0, min(self.duration - 0.05, seconds))
         self.engine.seek(self.position)
+        self.sync_take_video(self.position, force=True)
         self.timeline.reveal(self.position)
         self.update_timeline()
 
@@ -1270,6 +1344,8 @@ class Window(Gtk.ApplicationWindow):
         previous_position = self.position
         if mode in ("record", "play", "pause"):
             self.position = self.engine.position
+        if mode in ("play", "pause"):
+            self.sync_take_video()
         self.timeline.set_duration(self.duration)
         if mode in ("record", "play") and self.timeline.contains(previous_position):
             self.timeline.reveal(self.position)
@@ -1294,7 +1370,8 @@ class Window(Gtk.ApplicationWindow):
         recording = mode == "record"
         for child in (self.new_button, self.import_button, self.rewind_button, self.loop_button):
             child.set_sensitive(not self.busy and not recording)
-        camera_ready = not self.webcam_enabled or self.camera_preview.pipeline is not None or recording
+        camera_ready = (not self.webcam_enabled or self.camera_preview.pipeline is not None or recording
+                        or (self.showing_take_video and self.camera is not None))
         self.record_button.set_sensitive(not self.busy and self.input is not None and camera_ready)
         self.play_button.set_sensitive(not self.busy and not recording and
                                        bool(self.session.selected or self.session.data.get("backing") or

@@ -9,10 +9,12 @@ import tempfile
 import time
 import unittest
 
+from gi.repository import GLib
+
 from riff.audio import Device, Engine, Gst
 from riff.metronome import MAX_GAIN, MetronomeSettings
 from riff.storage import RATE, Session
-from riff.webcam import Camera, Preview, Recording
+from riff.webcam import Camera, Playback, Preview, Recording
 from test_audio import pcm16, spin_until
 
 
@@ -174,6 +176,84 @@ class WebcamIntegration(unittest.TestCase):
             self.assertEqual(self.errors, [])
         finally:
             preview.stop()
+
+    def test_take_video_follows_audio_pause_seek_and_rewind(self):
+        backing = self.backing()
+        take, video = self.record(backing, duration=1)
+        player = Playback(self.errors.append)
+        timer = None
+        try:
+            self.engine.play(backing, self.session.path(take), None, test_sink='fakesink sync=true')
+            player.start(video, self.engine.pipeline.get_clock(), test_sink='fakesink name=camera_preview sync=true')
+
+            def sync():
+                player.sync(self.engine.position, 0, self.engine.mode)
+                return True
+
+            timer = GLib.timeout_add(20, sync)
+            spin_until(lambda: self.engine.position > 0.2 or self.errors)
+            self.assertAlmostEqual(player.position, self.engine.position, delta=0.06)
+            self.assertTrue(player.playing)
+            self.engine.pause()
+            player.sync(self.engine.position, 0, self.engine.mode, force=True)
+            player.pipeline.get_state(Gst.SECOND)
+            paused = player.position
+            time.sleep(0.08)
+            self.assertAlmostEqual(player.position, paused, delta=0.015)
+            self.assertFalse(player.playing)
+            self.assertTrue(self.engine.seek(0.55))
+            player.sync(0.55, 0, 'pause', force=True)
+            player.pipeline.get_state(Gst.SECOND)
+            self.assertAlmostEqual(player.position, 0.55, delta=0.035)
+            self.engine.pause()
+            player.sync(self.engine.position, 0, 'play')
+            spin_until(lambda: self.engine.position > 0.65 or self.errors)
+            self.assertAlmostEqual(player.position, self.engine.position, delta=0.06)
+            pipeline = player.pipeline
+            self.assertTrue(self.engine.seek(0.05))
+            player.sync(0.05, 0, 'play', force=True)
+            spin_until(lambda: 0.08 < player.position < 0.3 or self.errors)
+            self.assertIs(player.pipeline, pipeline)
+            self.assertEqual(self.errors, [])
+        finally:
+            if timer:
+                GLib.source_remove(timer)
+            player.stop()
+
+    def test_video_start_alignment_end_and_restart_do_not_change_audio_duration(self):
+        backing = self.backing()
+        take, video = self.record(backing, duration=0.65, position=0.625)
+        player = Playback(self.errors.append)
+        timer = None
+        start = 0.625 - 0.125
+        try:
+            self.engine.play(backing, self.session.path(take), None, alignment_ms=-125,
+                             test_sink='fakesink sync=true')
+            player.start(video, self.engine.pipeline.get_clock(), test_sink='fakesink name=camera_preview sync=true')
+            self.assertEqual(player.sync(0.1, start, 'play'), 'before')
+            self.assertFalse(player.playing)
+            self.assertLess(player.position, 0.04)
+
+            def sync():
+                player.sync(self.engine.position, start, self.engine.mode)
+                return True
+
+            timer = GLib.timeout_add(20, sync)
+            spin_until(lambda: self.engine.position > start + 0.2 or self.errors)
+            self.assertAlmostEqual(player.position, self.engine.position - start, delta=0.06)
+            spin_until(lambda: self.engine.position > start + player.duration + 0.06 or self.errors)
+            self.assertEqual(player.sync(self.engine.position, start, 'play'), 'after')
+            self.assertEqual(self.engine.mode, 'play')
+            self.assertFalse(player.playing)
+            self.assertTrue(self.engine.seek(start + 0.1))
+            player.sync(start + 0.1, start, 'play', force=True)
+            spin_until(lambda: player.playing and player.position > 0.12 or self.errors)
+            self.assertAlmostEqual(player.position, self.engine.position - start, delta=0.06)
+            self.assertEqual(self.errors, [])
+        finally:
+            if timer:
+                GLib.source_remove(timer)
+            player.stop()
 
 
 if __name__ == '__main__':
