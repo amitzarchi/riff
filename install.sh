@@ -7,7 +7,8 @@ riff_icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
 mkdir -p "$riff_bin" "$riff_apps" "$riff_icons"
 chmod +x "$riff_root/run"
 ln -sfn "$riff_root/run" "$riff_bin/riff"
-install -m 644 "$riff_root/assets/dev.riff.Recorder.svg" "$riff_icons/dev.riff.Recorder.svg"
+install -m 644 "$riff_root/assets/wave-triangle.svg" "$riff_icons/dev.riff.Recorder-symbolic.svg"
+rm -f "$riff_icons/dev.riff.Recorder.svg"
 cat > "$riff_apps/dev.riff.Recorder.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -15,7 +16,7 @@ Name=Riff
 GenericName=Guitar Recorder
 Comment=Record guitar alongside a backing track
 Exec="$riff_root/run"
-Icon=dev.riff.Recorder
+Icon=dev.riff.Recorder-symbolic
 Terminal=false
 Categories=AudioVideo;Audio;Recorder;
 Keywords=guitar;record;backing;quad;cortex;

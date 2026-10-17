@@ -466,8 +466,14 @@ class Window(Gtk.ApplicationWindow):
         return max(0.0, min(limit, float(self.session.data.get("playback_start", 0))))
 
     def build(self):
+        Gtk.IconTheme.get_for_display(self.get_display()).add_search_path(
+            str(Path(__file__).resolve().parent.parent / "assets"))
+        self.set_icon_name("dev.riff.Recorder-symbolic")
         header = Gtk.HeaderBar()
-        brand = box(spacing=10, children=[label("≋", ["brand", "backing-accent"]), label("riff", ["brand"])])
+        logo = Gtk.Image.new_from_icon_name("dev.riff.Recorder-symbolic")
+        logo.set_pixel_size(24)
+        logo.add_css_class("backing-accent")
+        brand = box(spacing=10, children=[logo, label("riff", ["brand"])])
         header.pack_start(brand)
         header.set_title_widget(label("GUITAR RECORDER", ["eyebrow"]))
         self.folder_button = button(icon="folder-open-symbolic", callback=self.open_folder,

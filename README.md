@@ -16,6 +16,7 @@ riff
 
 Or run `./run` directly. Installation adds a **Riff** desktop launcher and
 `~/.local/bin/riff`; the source stays in this directory.
+The header and launcher use `assets/wave-triangle.svg` as a theme-adaptive symbolic icon.
 
 Runtime packages on Arch: `python`, `python-gobject`, `python-cairo`, `gtk4`,
 `gstreamer`, `gst-plugin-pipewire`, `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`, `gst-libav`,
@@ -219,5 +220,5 @@ USB mapping reference: [Neural DSP — using Quad Cortex as an audio interface](
 
 To remove the launcher, delete `~/.local/bin/riff`,
 `~/.local/share/applications/dev.riff.Recorder.desktop`, and
-`~/.local/share/icons/hicolor/scalable/apps/dev.riff.Recorder.svg`.
+`~/.local/share/icons/hicolor/scalable/apps/dev.riff.Recorder-symbolic.svg`.
 Your sessions are independent of the application directory.
