@@ -122,9 +122,6 @@ def css(c):
     .riff .session-name { background: transparent; border-color: transparent; box-shadow: none; font-size: 16px; font-weight: 600; padding: 0; min-height: 24px; }
     .riff .session-name:focus-within { border-color: transparent; border-bottom-color: %(accent)s; }
     .riff .lane { background: %(dark_background)s; border: 1px solid %(border)s; }
-    .riff .lane.backing-lane { border-left: 2px solid %(backing_color)s; }
-    .riff .lane.guitar-lane { border-left: 2px solid %(guitar_color)s; }
-    .riff .lane.metronome-lane { border-left: 2px solid %(metronome_color)s; }
     .riff .lane-controls { border-right: 1px solid %(border)s; padding: 14px; }
     .riff .track-name { font-size: 12px; font-weight: 700; }
     .riff .backing-accent { color: %(backing_color)s; }
