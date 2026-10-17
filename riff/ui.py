@@ -62,7 +62,7 @@ class Waveform(Gtk.DrawingArea):
         self.window, self.color, self.placeholder = window, color, placeholder
         self.peaks = []
         self.duration = 0
-        self.set_content_height(148)
+        self.set_content_height(138)
         self.set_draw_func(self.draw)
         gesture = Gtk.GestureClick()
         gesture.connect("pressed", self.clicked)
@@ -81,25 +81,25 @@ class Waveform(Gtk.DrawingArea):
         left, right, center = 20, width - 20, height / 2
         span = max(1, right - left)
         total = self.window.duration
-        color(c["lighter_background"], 0.7)
+        color(c["border"], 0.7)
         cr.set_line_width(1)
         cr.move_to(left, center)
         cr.line_to(right, center)
         cr.stroke()
         step = next((s for s in (5, 10, 15, 30, 60, 120, 300, 600, 1800) if total / s <= span / 75), 3600)
-        cr.select_font_face("JetBrains Mono", 0, 0)
+        cr.select_font_face("monospace", 0, 0)
         cr.set_font_size(9)
         for tick in range(0, int(total) + 1, step):
             x = left + tick / total * span
-            color(c["lighter_background"], 0.6)
+            color(c["border"], 0.6)
             cr.move_to(x + 0.5, 26)
             cr.line_to(x + 0.5, height - 15)
             cr.stroke()
-            color(c["dark_foreground"])
+            color(c["muted_text"])
             cr.move_to(x + 3, 17)
             cr.show_text(timecode(tick))
         if self.peaks:
-            color(self.color, 0.85)
+            color(c[self.color], 0.9)
             # Reduce actual envelopes into pixel columns; no fabricated waveform.
             count = min(int(span / 3), max(1, math.ceil(self.duration / total * span / 3)))
             for index in range(count):
@@ -110,15 +110,15 @@ class Waveform(Gtk.DrawingArea):
                 cr.rectangle(left + index * 3, center - extent, 1.8, extent * 2)
             cr.fill()
         else:
-            color(c["dark_foreground"])
-            cr.set_font_size(12)
+            color(c["muted_text"])
+            cr.set_font_size(11)
             text_width = cr.text_extents(self.placeholder).width
             cr.move_to(max(left, (width - text_width) / 2), center - 10)
             cr.show_text(self.placeholder)
         position = self.window.position
         if 0 <= position <= total:
             x = left + position / total * span
-            color(c["red"] if self.window.engine.mode == "record" else c["foreground"], 0.9)
+            color(c["error_color"] if self.window.engine.mode == "record" else c["foreground"], 0.9)
             cr.set_line_width(1)
             cr.move_to(x + 0.5, 23)
             cr.line_to(x + 0.5, height - 12)
@@ -267,13 +267,13 @@ class BackingDialog(Gtk.Window):
 
 class Window(Gtk.ApplicationWindow):
     def __init__(self, application):
-        super().__init__(application=application, title="Riff", default_width=1060, default_height=820)
+        super().__init__(application=application, title="Riff", default_width=1060, default_height=760)
         self.add_css_class("riff")
         self.set_size_request(540, 320)
-        self.colors = theme.colors()
-        provider = Gtk.CssProvider()
-        provider.load_from_string(theme.css(self.colors))
-        Gtk.StyleContext.add_provider_for_display(self.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self._css_provider = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_display(self.get_display(), self._css_provider,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.apply_theme(theme.colors())
         self.settings = read_json(STATE_DIR / "settings.json")
         self.engine = Engine(self.audio_error, self.audio_end)
         self.inputs, self.outputs = devices()
@@ -308,7 +308,25 @@ class Window(Gtk.ApplicationWindow):
         self.add_controller(keys)
         self.connect("close-request", self.close_request)
         self._timer = GLib.timeout_add(50, self.tick)
+        # Polling survives Omarchy replacing the whole theme directory on a switch.
+        self._theme_timer = GLib.timeout_add_seconds(1, self.refresh_theme)
         GLib.idle_add(self.start_meter)
+
+    def apply_theme(self, palette):
+        self.colors = palette
+        self._css_provider.load_from_string(theme.css(palette))
+        Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", palette["mode"] == "dark")
+        for name in ("backing_wave", "guitar_wave"):
+            if area := getattr(self, name, None):
+                area.queue_draw()
+
+    def refresh_theme(self):
+        if self.closed:
+            return False
+        palette = theme.colors(fallback=self.colors)
+        if palette != self.colors:
+            self.apply_theme(palette)
+        return True
 
     @property
     def duration(self):
@@ -328,7 +346,7 @@ class Window(Gtk.ApplicationWindow):
         header.pack_end(self.folder_button)
         self.set_titlebar(header)
         root = box(vertical=True)
-        content = margins(box(vertical=True, spacing=16), 24)
+        content = margins(box(vertical=True, spacing=12), 20)
         content.set_vexpand(True)
         title_row = box(spacing=12)
         title_info = box(vertical=True, spacing=3)
@@ -362,12 +380,12 @@ class Window(Gtk.ApplicationWindow):
         self.transport_status = label("Ready", ["muted", "small"])
         transport.append(self.transport_status)
         self.clock = label("00:00.0", ["clock"], 1)
-        self.clock.set_margin_start(16)
+        self.clock.set_margin_start(12)
         transport.append(self.clock)
         content.append(transport)
 
-        self.backing_wave = Waveform(self, self.colors["accent"], "Drop an audio file here, or add a backing track")
-        self.guitar_wave = Waveform(self, self.colors["yellow"], "Your next take starts here")
+        self.backing_wave = Waveform(self, "backing_color", "Add a file or YouTube link")
+        self.guitar_wave = Waveform(self, "guitar_color", "Ready for your next take")
         self.backing_name = label("No backing track", ["muted", "small"])
         self.guitar_name = label("No takes yet", ["muted", "small"])
         self.backing_slider = self.gain_slider("backing")
@@ -388,7 +406,7 @@ class Window(Gtk.ApplicationWindow):
         content.append(take_heading)
         self.takes_box = box(spacing=8)
         takes_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
-                                         vscrollbar_policy=Gtk.PolicyType.NEVER, min_content_height=50)
+                                         vscrollbar_policy=Gtk.PolicyType.NEVER, min_content_height=40)
         takes_scroll.set_child(self.takes_box)
         content.append(takes_scroll)
         bottom = box(spacing=8)
@@ -433,9 +451,10 @@ class Window(Gtk.ApplicationWindow):
     def lane(self, number, title, subtitle, slider, waveform, accent_class, action=None):
         row = box()
         row.add_css_class("lane")
-        controls = box(vertical=True, spacing=8)
+        row.add_css_class("backing-lane" if accent_class == "backing-accent" else "guitar-lane")
+        controls = box(vertical=True, spacing=6)
         controls.add_css_class("lane-controls")
-        controls.set_size_request(196, -1)
+        controls.set_size_request(188, -1)
         controls.append(box(spacing=10, children=[label(number, ["mono", "small", accent_class]),
                                                label(title, ["track-name"])]))
         subtitle.set_ellipsize(Pango.EllipsizeMode.END)
@@ -943,6 +962,7 @@ class Window(Gtk.ApplicationWindow):
             self.notice("Finish or cancel the current operation before closing.")
             return True
         self.closed = True
+        GLib.source_remove(self._theme_timer)
         self.finish_take()
         self.save()
         return False

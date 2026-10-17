@@ -3,7 +3,9 @@
 A small native recorder for guitar and backing tracks, built for Omarchy. GTK 4.10+,
 GStreamer, and FFmpeg; no web server, Electron runtime, or account. YouTube imports
 use the installed `yt-dlp`; recording and local sessions work offline.
-It reads the current Omarchy palette when it starts (Gruvbox fallback).
+The interface uses square corners, thin borders, compact controls, and the desktop's
+monospace font. It follows the active Omarchy palette live, including light themes
+(Gruvbox fallback when Omarchy isn't installed).
 
 ## Launch
 
@@ -70,6 +72,12 @@ the numbered USB channel order. Normal microphone inputs use PulseAudio capture.
 No effects, editing tools, plugins, tempo grid, or multitrack arrangement. Playback
 repeat does not loop recording. A single take ends automatically at one hour so
 standard WAV files stay comfortably below their size limit.
+
+Theme changes update the window, dialogs, meters, and waveform colors within a
+second without restarting playback or recording. Riff reads Omarchy's current
+`colors.toml` and keeps the last valid palette while the theme directory is being
+replaced. Muted labels and button text adapt for contrast in light and dark
+palettes. The app does not install hooks or change desktop theme settings.
 
 ## YouTube backing tracks
 
@@ -142,6 +150,10 @@ cancellation, temporary-file cleanup, and preservation of the current backing on
 failure. They do not need a network connection.
 The complete importer was also verified against a live, short YouTube video,
 including title extraction, download progress, and the final session WAV format.
+
+Palette tests cover light-theme contrast, sparse color definitions, and missing or
+incomplete files during a theme switch. Native GTK previews also verified a live
+palette switch during an uninterrupted recording with generated audio.
 
 USB mapping reference: [Neural DSP — using Quad Cortex as an audio interface](https://neuraldsp.com/getting-started/using-quad-cortex-as-an-audio-interface).
 
