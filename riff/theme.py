@@ -155,5 +155,8 @@ def css(c):
     .riff listview row:selected, .riff list row:selected { background: %(accent)s; color: %(on_accent)s; }
     .riff scrollbar trough { background: transparent; }
     .riff scrollbar slider { background: %(border)s; min-width: 4px; min-height: 4px; }
+    .riff scrollbar.timeline-scroll { background: %(background)s; }
+    .riff scrollbar.timeline-scroll trough { background: %(border)s; min-height: 6px; border: none; }
+    .riff scrollbar.timeline-scroll slider { background: %(muted_text)s; min-width: 24px; min-height: 6px; margin: 0; }
     .riff tooltip { background: %(background)s; color: %(foreground)s; border: 1px solid %(border)s; box-shadow: none; }
     """ % c

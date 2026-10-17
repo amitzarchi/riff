@@ -52,6 +52,15 @@ yt-dlp (Deno is installed on this machine).
 6. Select a take, press **Space** to hear it with the backing, and adjust the two
    volume sliders. Export the mix or guitar only as WAV.
 
+Use the timeline's **zoom in / out** buttons or **Ctrl++ / Ctrl+−** to inspect a
+smaller section, down to one second. **Fit** / **Ctrl+0** shows the whole session.
+**Ctrl+scroll** over a track zooms around the pointer. Drag the shared horizontal
+scrollbar, use horizontal scrolling, or **Shift+scroll** to move through the tracks.
+Backing, guitar, and metronome stay aligned, and clicking seeks to the displayed
+time. The view follows the playhead during playback and recording; scrolling away
+lets you inspect another section. New/open sessions start with the whole timeline
+visible.
+
 The live input meter does not send guitar audio back to the speakers. The Quad
 Cortex provides direct monitoring. Playback uses only output channels 1/2, including
 when the device exposes eight USB channels; channels 3–8 receive silence.
@@ -73,6 +82,7 @@ the numbered USB channel order. Normal microphone inputs use PulseAudio capture.
 
 - One backing track and one selected guitar take; every new recording keeps previous takes.
 - Play/pause, stop, seek, rewind, and playback repeat. Recording always starts at zero.
+- Shared timeline zoom, Fit, horizontal scrolling, and playhead following.
 - Two playback/export volume sliders. The recorded guitar WAV remains unaltered.
 - A permanent, optional metronome lane: 40–300 BPM, millisecond alignment, separate
   click volume, and a beat grid following the transport. It is off by default and
@@ -133,6 +143,8 @@ The most recent session and device choices are remembered in
 | T | Tap tempo |
 | Esc | Stop |
 | Home | Back to start |
+| Ctrl++ / Ctrl+− | Zoom in / out |
+| Ctrl+0 | Fit whole timeline |
 | Ctrl+O | Add YouTube link or audio file |
 | Ctrl+N | New session |
 | Ctrl+E | Export mix |
@@ -158,6 +170,10 @@ audible clicks. Native GTK previews
 also exercise the controls during recording and playback in light and dark themes.
 Tap-tempo checks use controlled timestamps for averaging, tempo changes, accidental
 double clicks, timeout/reset, and the supported BPM range.
+Timeline checks cover zoom anchoring, scrolled seek coordinates, bounds, recording
+growth, and playhead following. Native GTK previews verify synchronized track
+rendering, zoom controls/shortcuts, pointer zoom, shared scrolling, and uninterrupted
+playback and recording while zooming in light and dark themes.
 
 An opt-in regression checks actual PipeWire channel negotiation using temporary
 virtual devices and distinct signals on eight AUX channels. It removes those
