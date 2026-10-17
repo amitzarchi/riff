@@ -1,4 +1,4 @@
-"""Local sessions and lossless audio import/export. No service or database."""
+"""Local sessions, lossless audio, and mixed video export. No service or database."""
 
 from __future__ import annotations
 
@@ -280,8 +280,8 @@ def read_peaks(path: Path) -> list[float]:
         return peaks
 
 
-def export_audio(session: Session, destination: Path, guitar_only=False):
-    """Render to a temporary file, then atomically replace the chosen destination."""
+def _mix_inputs(session: Session, guitar_only=False, start=0.0):
+    """Build the current mix relative to the chosen start on the session timeline."""
     take, backing = session.selected, session.data.get("backing")
     if not take and (guitar_only or not backing):
         raise ValueError("Record a take first.")
@@ -293,6 +293,7 @@ def export_audio(session: Session, destination: Path, guitar_only=False):
         sources.append((take, session.data.get("guitar_gain", 1), session.data.get("alignment_ms", 0)))
     for index, (item, gain, offset) in enumerate(sources):
         inputs.extend(["-i", str(session.path(item))])
+        offset -= start * 1000
         correction = ""
         if offset > 0:
             correction = f"adelay={offset}:all=1,"
@@ -303,11 +304,46 @@ def export_audio(session: Session, destination: Path, guitar_only=False):
         labels.append(f"[{label}]")
     filters.append("".join(labels) + f"amix=inputs={len(labels)}:duration=longest:normalize=0,"
                    "alimiter=limit=0.98:level=false:latency=true[out]")
+    return inputs, ";".join(filters)
+
+
+def export_audio(session: Session, destination: Path, guitar_only=False):
+    """Render to a temporary file, then atomically replace the chosen destination."""
+    inputs, filters = _mix_inputs(session, guitar_only)
     temporary = destination.parent / f".riff-export-{uuid4().hex}.wav"
     try:
-        run_ffmpeg([*inputs, "-filter_complex", ";".join(filters), "-map", "[out]",
+        run_ffmpeg([*inputs, "-filter_complex", filters, "-map", "[out]",
                     "-ar", str(RATE), "-ac", "2", "-c:a", "pcm_s24le", "-rf64", "auto",
                     "-n", str(temporary)])
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def export_video(session: Session, destination: Path):
+    """Render the current mix over exactly the recorded video, to an atomic MP4."""
+    take = session.selected
+    video = session.video_path(take)
+    if not video or not video.is_file():
+        raise ValueError("The selected take has no video. Export the mix as WAV instead.")
+    protected = [session.folder / "session.json",
+                 *[path for item in session.data["takes"] for path in session.media_paths(item)]]
+    if backing := session.data.get("backing"):
+        protected.append(session.path(backing))
+    if destination.resolve() in [path.resolve() for path in protected]:
+        raise ValueError("Choose a new export filename to preserve your session audio and video.")
+    temporary = destination.parent / f".riff-export-{uuid4().hex}.mp4"
+    start = take.get("video_start", 0.0) + session.data.get("alignment_ms", 0) / 1000
+    inputs, filters = _mix_inputs(session, start=start)
+    video_index = len(inputs) // 2
+    # The clip defines the export interval. Shift sources before trimming so a
+    # negative alignment retains the recorded guitar and pads the backing's start.
+    filters += f";[out]apad[audio];[{video_index}:v:0]setpts=PTS-STARTPTS[video]"
+    try:
+        run_ffmpeg([*inputs, "-i", str(video), "-filter_complex", filters,
+                    "-map", "[video]", "-map", "[audio]", "-shortest", "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                    "-ar", str(RATE), "-ac", "2", "-movflags", "+faststart", "-n", str(temporary)])
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)

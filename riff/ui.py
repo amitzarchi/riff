@@ -17,7 +17,7 @@ from .download import DownloadCancelled, YouTubeDownload  # noqa: E402
 from .metronome import ALIGNMENT_LIMIT_MS, MAX_GAIN, MetronomeSettings, TapTempo  # noqa: E402
 from .timeline import Timeline  # noqa: E402
 from .webcam import Playback, Preview, Recording, cameras  # noqa: E402
-from .storage import (PEAK_RATE, STATE_DIR, Session, atomic_json, export_audio,  # noqa: E402
+from .storage import (PEAK_RATE, STATE_DIR, Session, atomic_json, export_audio, export_video,  # noqa: E402
                       import_backing, read_json, read_peaks)
 
 
@@ -601,7 +601,7 @@ class Window(Gtk.ApplicationWindow):
         self.message.set_hexpand(True)
         bottom.append(self.message)
         self.export_guitar_button = button("Guitar only", callback=lambda: self.export_dialog(True), classes=["outlined"], tooltip="Export the selected guitar take")
-        self.export_button = button("Export mix  ↗", callback=self.export_dialog, classes=["export"], tooltip="Export backing + selected take · Ctrl+E")
+        self.export_button = button("Export mix  ↗", callback=self.export_dialog, classes=["export"], tooltip="Export backing + selected take, including video when available · Ctrl+E")
         bottom.append(self.export_guitar_button)
         bottom.append(self.export_button)
         content.append(bottom)
@@ -1466,7 +1466,14 @@ class Window(Gtk.ApplicationWindow):
             return
         dialog = Gtk.FileDialog(title="Export guitar" if guitar_only else "Export mix")
         stem = self.session.data["name"].replace("/", "-")
-        dialog.set_initial_name(stem + ("-guitar.wav" if guitar_only else "-mix.wav"))
+        video = self.session.video_path(self.session.selected) if not guitar_only else None
+        has_video = bool(video and video.is_file())
+        extension = ".mp4" if has_video else ".wav"
+        dialog.set_initial_name(stem + ("-guitar.wav" if guitar_only else "-mix" + extension))
+        file_filter = Gtk.FileFilter(name="MP4 video or WAV audio" if has_video else "WAV audio")
+        for suffix in (("mp4", "wav") if has_video else ("wav",)):
+            file_filter.add_suffix(suffix)
+        dialog.set_default_filter(file_filter)
 
         def chosen(dialog, result):
             try:
@@ -1474,18 +1481,22 @@ class Window(Gtk.ApplicationWindow):
                 if not file or not file.get_path():
                     return
                 path = Path(file.get_path())
-                if path.suffix.lower() != ".wav":
-                    path = path.with_name(path.name + ".wav")
+                if path.suffix.lower() not in ((".mp4", ".wav") if has_video else (".wav",)):
+                    path = path.with_name(path.name + extension)
                 protected = [self.session.folder / "session.json",
                              *[path for take in self.session.data["takes"] for path in self.session.media_paths(take)]]
                 if self.session.data.get("backing"):
                     protected.append(self.session.path(self.session.data["backing"]))
                 if path.resolve() in [p.resolve() for p in protected]:
-                    self.notice("Choose a new export filename to preserve your session audio.", True)
+                    self.notice("Choose a new export filename to preserve your session audio and video.", True)
                     return
                 self.stop(meter=False)
-                self.work(lambda: export_audio(self.session, path, guitar_only),
-                          lambda _: self.notice(f"Exported {path.name} · 48 kHz / 24-bit WAV"), "Exporting WAV…")
+                if path.suffix.lower() == ".mp4":
+                    self.work(lambda: export_video(self.session, path),
+                              lambda _: self.notice(f"Exported {path.name} · video + mix"), "Exporting video + mix…")
+                else:
+                    self.work(lambda: export_audio(self.session, path, guitar_only),
+                              lambda _: self.notice(f"Exported {path.name} · 48 kHz / 24-bit WAV"), "Exporting WAV…")
             except GLib.Error:
                 pass
 

@@ -58,7 +58,8 @@ Webcam mode additionally uses `gst-plugin-gtk4` for its native preview, plus
    **48 kHz / 24-bit**. Leading silence keeps the guitar aligned for playback and
    export. Press **R** or **Esc** to finish.
 6. Select a take, press **Space** to hear it with the backing, and adjust the two
-   volume sliders. Export the mix or guitar only as WAV.
+   volume sliders. **Export mix** saves an MP4 when the selected take has video,
+   or a WAV for audio-only takes. **Guitar only** always saves a lossless WAV.
 
 Use **×** at the top right of a take to delete it, or **Delete all takes** to clear
 the session's takes. Audio and any associated video move to Trash; the backing track stays in place.
@@ -88,6 +89,11 @@ recorded segment, the panel shows its start/end status while backing playback
 continues. Stop returns to the live camera preview when Webcam is on, or hides
 the panel when it is off. **Open take video** still opens the saved clip externally.
 The saved video keeps the mix as recorded; the WAV remains editable.
+**Export mix** renders a new MP4 with the current guitar/backing volumes and
+alignment, without the metronome or the clip's original audio. The export starts
+and ends with the recorded video, trimming the mix to the same interval. Use a `.wav`
+filename in the export dialog to save an audio-only mix instead. Video exports
+use H.264 video and stereo 48 kHz AAC audio; the original takes stay lossless.
 Camera selection and webcam mode stay fixed while recording. If a camera fails,
 Riff preserves the audio captured so far. Audio-only operation does not need a camera.
 
@@ -231,8 +237,11 @@ and the guitar's leading silence survives export and interrupted-session recover
 Webcam tests record generated video with real stereo audio, decode the saved WebM,
 and verify duration, backing/guitar levels, metronome exclusion, start markers,
 camera errors, preview release, and video recovery. Take-deletion checks cover
-paired audio/video removal and rollback. Native GTK previews exercise the split
-panel, camera selection, recording controls, and light/dark themes with generated
+paired audio/video removal and rollback. MP4 export tests decode picture and audio
+to check current mix levels, exact clip duration, both alignment directions,
+and preserved source files. Failed exports preserve the existing destination.
+Native GTK previews exercise the split panel, camera selection, recording controls,
+and light/dark themes with generated
 camera frames, without opening a physical camera or microphone.
 
 An opt-in regression checks actual PipeWire channel negotiation using temporary
