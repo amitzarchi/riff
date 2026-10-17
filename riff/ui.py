@@ -14,7 +14,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 from . import theme  # noqa: E402
 from .audio import Engine, amplitude, devices  # noqa: E402
 from .download import DownloadCancelled, YouTubeDownload  # noqa: E402
-from .metronome import ALIGNMENT_LIMIT_MS, MetronomeSettings  # noqa: E402
+from .metronome import ALIGNMENT_LIMIT_MS, MetronomeSettings, TapTempo  # noqa: E402
 from .storage import (PEAK_RATE, STATE_DIR, Session, atomic_json, export_audio,  # noqa: E402
                       import_backing, read_json, read_peaks)
 
@@ -347,6 +347,8 @@ class Window(Gtk.ApplicationWindow):
         self._loading = True
         self._peaks_version = 0
         self._meter_error = False
+        self.tap_tempo = TapTempo()
+        self._applying_tap = False
         try:
             self.session = Session.open(Path(self.settings["last_session"]))
         except (KeyError, ValueError, OSError):
@@ -554,10 +556,13 @@ class Window(Gtk.ApplicationWindow):
         self.metronome_bpm.set_width_chars(3)
         self.metronome_bpm.set_numeric(True)
         self.metronome_bpm.set_tooltip_text("Tempo in beats per minute · 4/4")
-        self.metronome_bpm.connect("value-changed", self.metronome_changed)
+        self.metronome_bpm.connect("value-changed", self.metronome_bpm_changed)
         tempo.append(self.metronome_bpm)
         tempo.append(label("BPM", ["small", "muted"]))
         tempo.append(Gtk.Box(hexpand=True))
+        self.metronome_tap = button("Tap", callback=self.tap_metronome,
+                                    tooltip="Tap a steady beat to set BPM · T · pause 3 seconds to start over")
+        tempo.append(self.metronome_tap)
         self.metronome_toggle = Gtk.ToggleButton(label="Off", tooltip_text="Toggle click during playback / recording · M")
         self.metronome_toggle.connect("toggled", self.metronome_changed)
         tempo.append(self.metronome_toggle)
@@ -585,6 +590,25 @@ class Window(Gtk.ApplicationWindow):
         self.metronome_wave = BeatGrid(self)
         row.append(self.metronome_wave)
         return row
+
+    def metronome_bpm_changed(self, *_):
+        if not self._applying_tap:
+            self.tap_tempo.reset()
+        self.metronome_changed()
+
+    def tap_metronome(self):
+        if self.busy:
+            return
+        bpm = self.tap_tempo.tap()
+        if bpm is None:
+            self.notice("Tap again to set the tempo")
+            return
+        self._applying_tap = True
+        try:
+            self.metronome_bpm.set_value(bpm)
+        finally:
+            self._applying_tap = False
+        self.notice(f"Tap tempo · {bpm} BPM")
 
     def metronome_changed(self, *_):
         if self._loading:
@@ -635,6 +659,7 @@ class Window(Gtk.ApplicationWindow):
 
     def load_session(self):
         self._loading = True
+        self.tap_tempo.reset()
         self.position = 0
         self.name_entry.set_text(self.session.data["name"])
         self.backing_slider.set_value(self.session.data.get("backing_gain", 0.65))
@@ -845,7 +870,7 @@ class Window(Gtk.ApplicationWindow):
                                          bool(self.session.selected or self.session.data.get("backing")))
         self.export_guitar_button.set_sensitive(not self.busy and not recording and bool(self.session.selected))
         self.takes_box.set_sensitive(not self.busy and not recording)
-        for child in (self.metronome_toggle, self.metronome_bpm, self.metronome_slider,
+        for child in (self.metronome_toggle, self.metronome_bpm, self.metronome_tap, self.metronome_slider,
                       self.metronome_alignment, self.metronome_reset):
             child.set_sensitive(not self.busy)
         for area in (self.backing_wave, self.guitar_wave, self.metronome_wave):
@@ -991,7 +1016,7 @@ class Window(Gtk.ApplicationWindow):
         body = margins(box(vertical=True, spacing=16), 24)
         body.append(label("A little room to play.", ["track-name"]))
         body.append(button("Open saved session…", callback=lambda: (dialog.close(), self.open_session()), classes=["outlined"]))
-        for text in ("Space         Play / pause", "R                 Record / finish take", "M                Toggle metronome", "Esc              Stop", "Home          Back to start", "Ctrl+O         Add backing track", "Ctrl+N         New session", "Ctrl+E          Export mix"):
+        for text in ("Space         Play / pause", "R                 Record / finish take", "M                Toggle metronome", "T                 Tap tempo", "Esc              Stop", "Home          Back to start", "Ctrl+O         Add backing track", "Ctrl+N         New session", "Ctrl+E          Export mix"):
             body.append(label(text, ["mono", "small", "muted"]))
         hint = label("Sessions & takes live in ~/Music/Riff.\nNo account. No cloud. Just audio.", ["small", "muted"])
         body.append(hint)
@@ -1092,6 +1117,7 @@ class Window(Gtk.ApplicationWindow):
         else:
             actions = {Gdk.KEY_space: self.play, Gdk.KEY_r: self.record, Gdk.KEY_R: self.record,
                        Gdk.KEY_m: self.toggle_metronome, Gdk.KEY_M: self.toggle_metronome,
+                       Gdk.KEY_t: self.tap_metronome, Gdk.KEY_T: self.tap_metronome,
                        Gdk.KEY_Escape: self.stop, Gdk.KEY_Home: lambda: self.seek(0)}
         action = actions.get(key)
         if action:

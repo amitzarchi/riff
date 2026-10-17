@@ -41,6 +41,9 @@ yt-dlp (Deno is installed on this machine).
    earlier, positive values delay them. The range is −60,000 to +60,000 ms, in 1 ms
    steps; type a value for a longer intro, or use the reset button to return to zero.
    Set the BPM to match the backing, then adjust Align until the beats line up.
+   Click **Tap** (or press **T**) at least twice to set BPM from your rhythm. More
+   taps smooth the estimate over the last four beats; pause for 3 seconds to start
+   a fresh estimate. Manual BPM edits also clear the tap history.
    The beat grid follows the offset. BPM, alignment, volume, and on/off are saved
    with the session and can be changed during playback or recording.
    You can also press **Space** with just the metronome enabled to practice without audio files.
@@ -127,6 +130,7 @@ The most recent session and device choices are remembered in
 | Space | Play / pause |
 | R | Record / finish take |
 | M | Toggle metronome |
+| T | Tap tempo |
 | Esc | Stop |
 | Home | Back to start |
 | Ctrl+O | Add YouTube link or audio file |
@@ -152,6 +156,8 @@ tempo/alignment/volume/mute, and finite playback duration. A silent generated in
 stays silent in the recorded take and both exports while the monitoring mix contains
 audible clicks. Native GTK previews
 also exercise the controls during recording and playback in light and dark themes.
+Tap-tempo checks use controlled timestamps for averaging, tempo changes, accidental
+double clicks, timeout/reset, and the supported BPM range.
 
 An opt-in regression checks actual PipeWire channel negotiation using temporary
 virtual devices and distinct signals on eight AUX channels. It removes those

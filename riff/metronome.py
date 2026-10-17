@@ -1,10 +1,12 @@
 """A seekable click source for monitoring. It never feeds the recording writer."""
 
 from array import array
+from collections import deque
 from dataclasses import dataclass
 import math
 import sys
 import threading
+import time
 
 import gi
 
@@ -14,6 +16,30 @@ gi.require_version("Gst", "1.0")
 from gi.repository import Gst  # noqa: E402
 
 ALIGNMENT_LIMIT_MS = 60_000
+
+
+class TapTempo:
+    """Average the last four beat intervals; pause for three seconds to restart."""
+
+    def __init__(self):
+        self._taps = deque(maxlen=5)
+
+    def reset(self):
+        self._taps.clear()
+
+    def tap(self, timestamp=None):
+        timestamp = time.monotonic() if timestamp is None else timestamp
+        if self._taps:
+            gap = timestamp - self._taps[-1]
+            if gap >= 3:
+                self.reset()
+            elif gap < 0.1:
+                return None  # Ignore accidental double clicks.
+        self._taps.append(timestamp)
+        if len(self._taps) < 2:
+            return None
+        interval = (self._taps[-1] - self._taps[0]) / (len(self._taps) - 1)
+        return max(40, min(300, round(60 / interval)))
 
 
 @dataclass(frozen=True)
