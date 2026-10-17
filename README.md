@@ -26,6 +26,8 @@ Runtime packages on Arch: `python`, `python-gobject`, `python-cairo`, `gtk4`,
 The Python application uses system packages, with no pip environment or build step.
 YouTube import additionally needs `yt-dlp` and a JavaScript runtime supported by
 yt-dlp (Deno is installed on this machine).
+Webcam mode additionally uses `gst-plugin-gtk4` for its native preview, plus
+`vp8enc`, `opusenc`, and `webmmux` from the GStreamer plugins for video recording.
 
 ## Record a guitar part
 
@@ -59,11 +61,28 @@ yt-dlp (Deno is installed on this machine).
    volume sliders. Export the mix or guitar only as WAV.
 
 Use **×** at the top right of a take to delete it, or **Delete all takes** to clear
-the session's takes. Audio moves to Trash; the backing track stays in place.
+the session's takes. Audio and any associated video move to Trash; the backing track stays in place.
 Deleting the selected take stops playback and selects the next remaining take
 (or the previous one at the end). These controls are disabled during recording
 and imports/exports. If Trash is unavailable, removed audio stays in a
 `deleted-takes-…` folder inside the session instead.
+
+Turn on **Webcam** in the header to show a live camera preview in the right half
+of the app. Drag the divider to resize the two panels. Select an input in the
+camera dropdown; **Refresh** finds newly connected cameras and retries the preview.
+The camera selection, panel split, and webcam mode are remembered. Turning Webcam
+off releases the camera and returns to the full-width audio workspace.
+
+With Webcam on, **Record / R** saves a **720p / 30 fps WebM** beside the usual
+lossless guitar WAV. The video contains the guitar and backing mix, with their
+current volumes and alignment; the metronome and webcam microphone are excluded.
+Both streams share a clock. Recording starts from the saved start marker, with
+the video starting at the beginning of the captured performance and the WAV
+retaining the leading silence used for timeline alignment. Video takes show a
+**Video** label; select one and use **Open take video** in the camera panel to watch
+it in your video player. The video keeps the mix as recorded; the WAV remains editable.
+Camera selection and webcam mode stay fixed while recording. If a camera fails,
+Riff preserves the audio captured so far. Audio-only operation does not need a camera.
 
 Use the timeline's **zoom in / out** buttons or **Ctrl++ / Ctrl+−** to inspect a
 smaller section, down to one second. **Fit** / **Ctrl+0** shows the whole session.
@@ -202,6 +221,12 @@ Start-marker tests exercise immediate play, playing/paused jumps, Stop/Play,
 repeat, reset, persistence, and recording guards. Offset recording checks verify
 the backing starts at the selected time, clicks retain their absolute beat phase,
 and the guitar's leading silence survives export and interrupted-session recovery.
+Webcam tests record generated video with real stereo audio, decode the saved WebM,
+and verify duration, backing/guitar levels, metronome exclusion, start markers,
+camera errors, preview release, and video recovery. Take-deletion checks cover
+paired audio/video removal and rollback. Native GTK previews exercise the split
+panel, camera selection, recording controls, and light/dark themes with generated
+camera frames, without opening a physical camera or microphone.
 
 An opt-in regression checks actual PipeWire channel negotiation using temporary
 virtual devices and distinct signals on eight AUX channels. It removes those

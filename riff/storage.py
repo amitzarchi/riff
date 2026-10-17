@@ -97,29 +97,34 @@ class Session:
         if data.get("version") != 1 or not isinstance(data.get("takes"), list):
             raise ValueError("Choose a Riff session folder containing session.json.")
         session = cls(folder, data)
+        recovered = False
         # Files are always confined to the session folder.
         for item in [data.get("backing"), *data["takes"]]:
             if not item:
                 continue
-            path = session.path(item)
-            if not path.is_file():
-                # A deletion interrupted before its metadata was saved must roll back.
-                for archive in folder.glob("deleted-takes-*"):
-                    staged = archive / path.name
-                    if (not archive.is_symlink() and staged.is_file()
-                            and staged.resolve().parent == archive.resolve()):
-                        staged.replace(path)
-                        try:
-                            archive.rmdir()
-                        except OSError:
-                            pass
-                        break
-            if not path.is_file():
-                raise ValueError(f"Missing session audio: {item.get('file', '?')}")
+            for path in session.media_paths(item):
+                if not path.is_file():
+                    # An interrupted deletion must restore every referenced media file.
+                    for archive in folder.glob("deleted-takes-*"):
+                        staged = archive / path.name
+                        if (not archive.is_symlink() and staged.is_file()
+                                and staged.resolve().parent == archive.resolve()):
+                            staged.replace(path)
+                            try:
+                                archive.rmdir()
+                            except OSError:
+                                pass
+                            break
+                if not path.is_file():
+                    if path == session.path(item):
+                        raise ValueError(f"Missing session audio: {item.get('file', '?')}")
+                    # A missing video must not prevent access to the lossless audio.
+                    item.pop("video", None)
+                    item.pop("video_start", None)
+                    recovered = True
         # writeframes patches the WAV header on every buffer. A killed process can
         # leave valid audio without its final metadata entry; recover it on open.
         known = {item["file"] for item in data["takes"]}
-        recovered = False
         for path in sorted(folder.glob("take-*.wav")):
             if path.name in known:
                 continue
@@ -128,9 +133,10 @@ class Session:
                     duration = audio.getnframes() / audio.getframerate()
                 if duration > 0:
                     ident = path.stem.removeprefix("take-")
-                    data["takes"].append({"id": ident, "file": path.name,
-                                          "name": f"Recovered take {len(data['takes']) + 1:02}",
-                                          "duration": duration})
+                    take = {"id": ident, "file": path.name,
+                            "name": f"Recovered take {len(data['takes']) + 1:02}", "duration": duration}
+                    session.attach_video(take)
+                    data["takes"].append(take)
                     data["selected"] = ident
                     recovered = True
             except (OSError, EOFError, wave.Error):
@@ -144,6 +150,24 @@ class Session:
         if path.parent != self.folder.resolve():
             raise ValueError("Audio must be inside the session folder.")
         return path
+
+    def video_path(self, take):
+        return self.path({"file": take["video"]}) if take and take.get("video") else None
+
+    def media_paths(self, take):
+        paths = [self.path(take)]
+        if video := self.video_path(take):
+            paths.append(video)
+        partial = self.path({"file": paths[0].with_suffix(".webm.part").name})
+        if partial.is_file():
+            paths.append(partial)
+        return paths
+
+    def attach_video(self, take):
+        video = self.path({"file": self.path(take).with_suffix(".webm").name})
+        if video.is_file():
+            take["video"] = video.name
+            take.setdefault("video_start", self.data.get("playback_start", 0.0))
 
     @property
     def selected(self):
@@ -169,10 +193,10 @@ class Session:
         if not removed:
             return None
         remaining = [take for take in takes if take["id"] not in identifiers]
-        protected = {self.path(take) for take in remaining}
+        protected = {path for take in remaining for path in self.media_paths(take)}
         if backing := self.data.get("backing"):
             protected.add(self.path(backing))
-        paths = list(dict.fromkeys(self.path(take) for take in removed))
+        paths = list(dict.fromkeys(path for take in removed for path in self.media_paths(take)))
         if set(paths) & protected:
             raise ValueError("Cannot delete audio used by the backing track or another take.")
         selected = self.data.get("selected")
@@ -206,6 +230,7 @@ class Session:
         if take["duration"] <= 0:
             self.path(take).unlink(missing_ok=True)
             return False
+        self.attach_video(take)
         self.data["takes"].append(take)
         self.data["selected"] = take["id"]
         self.save()

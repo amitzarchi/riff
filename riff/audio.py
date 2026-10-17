@@ -15,6 +15,7 @@ import gi
 
 from .storage import PEAK_RATE, RATE, open_take
 from .metronome import ClickSource, branch as metronome_branch
+from .webcam import paintable as camera_paintable, recording_branch
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
@@ -131,6 +132,10 @@ class Engine:
         self._lock = threading.Lock()
         self._first_buffer = True
         self.click_source = None
+        self._video_recording = None
+        self.video_path = None
+        self.video_error = None
+        self.video_frames = 0
 
     def _launch(self, description: str, mode: str, configure=None, position=0.0):
         self.pipeline = Gst.parse_launch(description)
@@ -154,8 +159,11 @@ class Engine:
 
     def capture(self, device: Device, pair: tuple[int, int], path: Path | None = None,
                 backing: Path | None = None, backing_gain=0.65,
-                output: Device | None = None, source_override=None, test_sink=None, metronome=None, position=0.0):
+                output: Device | None = None, source_override=None, test_sink=None, metronome=None, position=0.0,
+                video=None):
         self.stop()
+        self.video_path, self.video_error = None, None
+        self.video_frames = 0
         self.frames, self.peaks, self._first_buffer = 0, [], True
         self.record_start = round(position * RATE) / RATE if path else 0.0
         if max(pair) >= device.channels:
@@ -173,6 +181,7 @@ class Engine:
             f"matrix=\"{matrix(device.channels, pair)}\" ! "
             "level name=input_level interval=20000000 post-messages=true ! audioconvert ! "
             f"audio/x-raw,format=S24LE,rate={RATE},channels=2 ! "
+            + ("tee name=guitar_input guitar_input. ! queue ! " if video else "") +
             "appsink name=capture emit-signals=true sync=false async=false "
             "max-buffers=8 drop=false wait-on-eos=false"
         )
@@ -182,15 +191,36 @@ class Engine:
                             f"audio/x-raw,format=F32LE,channels=2,rate={RATE} ! "
                             + output_chain(output, test_sink))
         if backing:
+            backing_queue = ("queue max-size-time=40000000 max-size-bytes=0 max-size-buffers=0"
+                             if video else "queue")
             description += (f" filesrc location={quote(backing)} ! wavparse ! audioconvert ! "
                             f"audio/x-raw,format=F32LE,channels=2,rate={RATE} ! "
-                            f"volume name=backing_volume volume={backing_gain} ! queue ! mix.sink_0")
+                            f"volume name=backing_volume volume={backing_gain} ! "
+                            + ("tee name=backing_input backing_input. ! " if video else "") +
+                            f"{backing_queue} ! mix.sink_0")
         if monitor_metronome:
             description += " " + metronome_branch(metronome)
         try:
+            if video:
+                if path is None:
+                    raise ValueError("A webcam recording needs an audio take.")
+                description += (" " + recording_branch(video) +
+                                " guitar_input. ! queue ! audioconvert ! audioresample ! "
+                                f"volume name=video_guitar_volume volume={video.guitar_gain} ! video_mix.sink_1")
+                if backing:
+                    description += f" backing_input. ! {backing_queue} ! video_mix.sink_0"
+                self._video_recording = video
+
             def configure(pipeline):
                 if backing and position:
                     pipeline.get_by_name("mix").get_static_pad("sink_0").set_offset(-round(position * Gst.SECOND))
+                if video:
+                    pipeline.get_by_name("camera_tee").get_static_pad("sink").add_probe(
+                        Gst.PadProbeType.BUFFER, self._video_frame)
+                    video_mix = pipeline.get_by_name("video_mix")
+                    video_mix.get_static_pad("sink_1").set_offset(video.alignment_ms * Gst.MSECOND)
+                    if backing and position:
+                        video_mix.get_static_pad("sink_0").set_offset(-round(position * Gst.SECOND))
                 if monitor_metronome:
                     self.click_source = ClickSource(metronome.bpm, self.record_limit - position,
                                                     metronome.alignment_ms, position=position)
@@ -200,6 +230,10 @@ class Engine:
         except Exception:
             self.stop()
             raise
+
+    def _video_frame(self, _pad, _info):
+        self.video_frames += 1
+        return Gst.PadProbeReturn.OK
 
     def _sample(self, sink):
         sample = sink.emit("pull-sample")
@@ -230,6 +264,8 @@ class Engine:
             return
         if message.type == Gst.MessageType.ERROR:
             error, _debug = message.parse_error()
+            if self._video_recording:
+                self.video_error = error.message
             self.on_error(error.message)
         elif message.type == Gst.MessageType.EOS:
             self.on_end()
@@ -284,9 +320,14 @@ class Engine:
             raise
 
     def set_gain(self, name: str, value: float):
-        element = self.pipeline.get_by_name(f"{name}_volume") if self.pipeline else None
-        if element:
-            element.set_property("volume", value)
+        for suffix in (f"{name}_volume", f"video_{name}_volume"):
+            element = self.pipeline.get_by_name(suffix) if self.pipeline else None
+            if element:
+                element.set_property("volume", value)
+
+    @property
+    def video_paintable(self):
+        return camera_paintable(self.pipeline)
 
     def set_metronome(self, settings):
         if self.click_source:
@@ -319,11 +360,41 @@ class Engine:
 
     def stop(self):
         pipeline, self.pipeline = self.pipeline, None
-        if self.bus:
-            self.bus.remove_signal_watch()
-            self.bus = None
+        bus, self.bus = self.bus, None
+        video, self._video_recording = self._video_recording, None
+        if bus:
+            bus.remove_signal_watch()
+        if video and pipeline and not self.video_error:
+            end = round(self.frames * Gst.SECOND / RATE)
+
+            def limit_audio(_pad, info):
+                buffer = info.get_buffer()
+                return Gst.PadProbeReturn.DROP if buffer and buffer.pts >= end else Gst.PadProbeReturn.OK
+
+            # Queued backing audio must not extend a video after Record stops.
+            pipeline.get_by_name("video_mix").get_static_pad("src").add_probe(Gst.PadProbeType.BUFFER, limit_audio)
+            # The muxer needs EOS to write a seekable, complete video before NULL.
+            if pipeline.send_event(Gst.Event.new_eos()):
+                message = bus.timed_pop_filtered(5 * Gst.SECOND, Gst.MessageType.EOS | Gst.MessageType.ERROR)
+                if message is None:
+                    self.video_error = "The camera video did not finish in time. The audio take is preserved."
+                elif message.type == Gst.MessageType.ERROR:
+                    self.video_error = message.parse_error()[0].message
+            else:
+                self.video_error = "Could not finish the camera video. The audio take is preserved."
         if pipeline:
             pipeline.set_state(Gst.State.NULL)
+        if video and not self.video_error and not self.video_frames:
+            self.video_error = "No camera frames were captured. The audio take is preserved."
+        if video and not self.video_error:
+            try:
+                if video.temporary.stat().st_size > 0:
+                    video.temporary.replace(video.path)
+                    self.video_path = video.path
+                else:
+                    self.video_error = "The video file is empty. The audio take is preserved."
+            except OSError as error:
+                self.video_error = f"Could not save the video: {error}"
         self.click_source = None
         with self._lock:
             try:

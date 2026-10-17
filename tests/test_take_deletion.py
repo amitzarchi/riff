@@ -211,6 +211,40 @@ class TakeDeletion(unittest.TestCase):
         self.app.apply_peaks(None, [], 2, "audio already moved to Trash")
         self.assertEqual(self.app.notices, [])
 
+    def test_deletion_moves_the_video_and_unfinished_video_with_the_audio(self):
+        take = self.takes[0]
+        video = self.session.path(take).with_suffix('.webm')
+        partial = self.session.path(take).with_suffix('.webm.part')
+        video.write_bytes(b'completed video')
+        partial.write_bytes(b'unfinished video')
+        self.session.attach_video(take)
+        self.session.save()
+        archive = self.session.remove_takes([take['id']])
+        self.assertEqual({path.name for path in archive.iterdir()}, {take['file'], video.name, partial.name})
+        self.assertEqual(Session.open(self.session.folder).data['takes'], self.takes[1:])
+
+    def test_interrupted_deletion_restores_both_the_audio_and_video(self):
+        take = self.takes[0]
+        video = self.session.path(take).with_suffix('.webm')
+        video.write_bytes(b'completed video')
+        self.session.attach_video(take)
+        self.session.save()
+        archive = self.session.folder / 'deleted-takes-interrupted'
+        archive.mkdir()
+        for path in self.session.media_paths(take):
+            path.replace(archive / path.name)
+        self.assert_original_session()
+        self.assertEqual(self.session.video_path(take).read_bytes(), b'completed video')
+
+    def test_a_missing_video_does_not_prevent_opening_the_audio_session(self):
+        take = self.takes[0]
+        take.update(video='missing.webm', video_start=0.5)
+        self.session.save()
+        restored = Session.open(self.session.folder)
+        self.assertNotIn('video', restored.data['takes'][0])
+        self.assertNotIn('video_start', restored.data['takes'][0])
+        self.assertTrue(restored.path(restored.data['takes'][0]).is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
