@@ -47,8 +47,10 @@ yt-dlp (Deno is installed on this machine).
    The beat grid follows the offset. BPM, alignment, volume, and on/off are saved
    with the session and can be changed during playback or recording.
    You can also press **Space** with just the metronome enabled to practice without audio files.
-5. Press **R** to record. The backing starts at the beginning, and a new stereo take
-   is saved at **48 kHz / 24-bit**. Press **R** or **Esc** to finish.
+5. Press **R** to record from the start marker (zero until you set one). The backing
+   and metronome start from that same time, and a new stereo take is saved at
+   **48 kHz / 24-bit**. Leading silence keeps the guitar aligned for playback and
+   export. Press **R** or **Esc** to finish.
 6. Select a take, press **Space** to hear it with the backing, and adjust the two
    volume sliders. Export the mix or guitar only as WAV.
 
@@ -60,6 +62,16 @@ Backing, guitar, and metronome stay aligned, and clicking seeks to the displayed
 time. The view follows the playhead during playback and recording; scrolling away
 lets you inspect another section. New/open sessions start with the whole timeline
 visible.
+
+**Right-click any track** to set the start marker at that time and play immediately.
+It also jumps while playing or resumes from that point when paused. A dashed marker
+appears across the tracks, with its time shown above them. **Stop / Esc** returns
+to this saved point, and the next Play starts there. Playback repeat also returns
+to the marker. **Home**, rewind, or clicking the **Start** time clears it and returns
+to zero. The start point is saved per session, and right-click respects zoom and
+horizontal scrolling. Left-click still moves the playhead without changing the marker.
+**Record / R** starts a fresh take from that same marker. Silence before the start
+uses a sparse WAV file, so a long intro does not need to be written to disk first.
 
 The live input meter does not send guitar audio back to the speakers. The Quad
 Cortex provides direct monitoring. Playback uses only output channels 1/2, including
@@ -81,7 +93,8 @@ the numbered USB channel order. Normal microphone inputs use PulseAudio capture.
 ## Small by design
 
 - One backing track and one selected guitar take; every new recording keeps previous takes.
-- Play/pause, stop, seek, rewind, and playback repeat. Recording always starts at zero.
+- Play/pause, stop, seek, rewind, and playback repeat. A saved start marker applies
+  to both playback and new recordings.
 - Shared timeline zoom, Fit, horizontal scrolling, and playhead following.
 - Two playback/export volume sliders. The recorded guitar WAV remains unaltered.
 - A permanent, optional metronome lane: 40–300 BPM, millisecond alignment, separate
@@ -96,8 +109,8 @@ the numbered USB channel order. Normal microphone inputs use PulseAudio capture.
   to prevent mix overload. Raw takes are never normalized or limited.
 
 No effects, editing tools, plugins, or multitrack arrangement. Playback
-repeat does not loop recording. A single take ends automatically at one hour so
-standard WAV files stay comfortably below their size limit.
+repeat does not loop recording. Recording ends automatically at 60:00 on the session
+timeline so standard WAV files stay comfortably below their size limit.
 
 Theme changes update the window, dialogs, meters, and waveform colors within a
 second without restarting playback or recording. Riff reads Omarchy's current
@@ -141,8 +154,8 @@ The most recent session and device choices are remembered in
 | R | Record / finish take |
 | M | Toggle metronome |
 | T | Tap tempo |
-| Esc | Stop |
-| Home | Back to start |
+| Esc | Stop / return to start marker |
+| Home | Reset start marker and rewind |
 | Ctrl++ / Ctrl+− | Zoom in / out |
 | Ctrl+0 | Fit whole timeline |
 | Ctrl+O | Add YouTube link or audio file |
@@ -174,6 +187,10 @@ Timeline checks cover zoom anchoring, scrolled seek coordinates, bounds, recordi
 growth, and playhead following. Native GTK previews verify synchronized track
 rendering, zoom controls/shortcuts, pointer zoom, shared scrolling, and uninterrupted
 playback and recording while zooming in light and dark themes.
+Start-marker tests exercise immediate play, playing/paused jumps, Stop/Play,
+repeat, reset, persistence, and recording guards. Offset recording checks verify
+the backing starts at the selected time, clicks retain their absolute beat phase,
+and the guitar's leading silence survives export and interrupted-session recovery.
 
 An opt-in regression checks actual PipeWire channel negotiation using temporary
 virtual devices and distinct signals on eight AUX channels. It removes those

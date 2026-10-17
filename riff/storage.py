@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -15,6 +16,47 @@ RATE = 48_000
 PEAK_RATE = 50
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "riff"
 SESSION_DIR = Path.home() / "Music" / "Riff"
+
+
+class _TakeFile(io.BufferedWriter):
+    def __init__(self, path):
+        super().__init__(open(path, "wb", buffering=0))
+        self.silence = False
+
+    def write(self, data):
+        if self.silence:
+            self.seek(len(data), io.SEEK_CUR)
+            return len(data)
+        return super().write(data)
+
+
+def open_take(path, start_frames=0):
+    """Create a WAV with sparse leading silence, keeping audio on session time."""
+    output = _TakeFile(path)
+    writer = None
+    try:
+        writer = wave.open(output, "wb")
+        writer.setparams((2, 3, RATE, 0, "NONE", "not compressed"))
+        writer.writeframes(b"")
+        if start_frames:
+            output.silence = True
+            zeros = bytes(RATE * 6)
+            while start_frames:
+                frames = min(RATE, start_frames)
+                writer.writeframesraw(memoryview(zeros)[:frames * 6])
+                start_frames -= frames
+            output.silence = False
+            writer.writeframes(b"")
+            output.truncate()
+        return writer, output
+    except Exception:
+        output.silence = False
+        try:
+            if writer:
+                writer.close()
+        finally:
+            output.close()
+        raise
 
 
 def atomic_json(path: Path, value: dict):
@@ -43,6 +85,7 @@ class Session:
         session = cls(folder, {"version": 1, "name": f"Session · {now:%d %b}",
                                "backing": None, "takes": [], "selected": None,
                                "backing_gain": 0.65, "guitar_gain": 1.0, "alignment_ms": 0,
+                               "playback_start": 0.0,
                                "metronome_enabled": False, "metronome_bpm": 120, "metronome_gain": 0.3,
                                "metronome_alignment_ms": 0})
         session.save()

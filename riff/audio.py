@@ -13,7 +13,7 @@ from pathlib import Path
 
 import gi
 
-from .storage import RATE
+from .storage import PEAK_RATE, RATE, open_take
 from .metronome import ClickSource, branch as metronome_branch
 
 gi.require_version("Gst", "1.0")
@@ -122,6 +122,8 @@ class Engine:
         self.bus = None
         self.mode = "idle"
         self.writer = None
+        self._take_file = None
+        self.record_start = 0.0
         self.frames = 0
         self.peaks = []
         self.peak_db = -90.0
@@ -152,16 +154,17 @@ class Engine:
 
     def capture(self, device: Device, pair: tuple[int, int], path: Path | None = None,
                 backing: Path | None = None, backing_gain=0.65,
-                output: Device | None = None, source_override=None, test_sink=None, metronome=None):
+                output: Device | None = None, source_override=None, test_sink=None, metronome=None, position=0.0):
         self.stop()
+        self.frames, self.peaks, self._first_buffer = 0, [], True
+        self.record_start = round(position * RATE) / RATE if path else 0.0
         if max(pair) >= device.channels:
             raise ValueError("The selected input channels are unavailable on this device.")
-        self.frames, self.peaks, self._first_buffer = 0, [], True
         if path:
-            self.writer = wave.open(str(path), "wb")
-            self.writer.setnchannels(2)
-            self.writer.setsampwidth(3)
-            self.writer.setframerate(RATE)
+            if not 0 <= position < self.record_limit:
+                raise ValueError("Choose a recording start within the first hour.")
+            self.writer, self._take_file = open_take(path, round(self.record_start * RATE))
+            self.peaks = [0.0] * round(self.record_start * PEAK_RATE)
         source = source_override or capture_source(device)
         description = (
             f"{source} ! audioconvert ! audio/x-raw,format=S32LE,rate={RATE},"
@@ -186,8 +189,11 @@ class Engine:
             description += " " + metronome_branch(metronome)
         try:
             def configure(pipeline):
+                if backing and position:
+                    pipeline.get_by_name("mix").get_static_pad("sink_0").set_offset(-round(position * Gst.SECOND))
                 if monitor_metronome:
-                    self.click_source = ClickSource(metronome.bpm, self.record_limit, metronome.alignment_ms)
+                    self.click_source = ClickSource(metronome.bpm, self.record_limit - position,
+                                                    metronome.alignment_ms, position=position)
                     self.click_source.attach(pipeline.get_by_name("metronome_source"))
 
             self._launch(description, "record" if path else "meter", configure)
@@ -305,7 +311,7 @@ class Engine:
     @property
     def position(self) -> float:
         if self.mode == "record":
-            return self.frames / RATE
+            return self.record_start + self.frames / RATE
         if self.pipeline and self.mode in ("play", "pause"):
             success, position = self.pipeline.query_position(Gst.Format.TIME)
             return position / Gst.SECOND if success else 0.0
@@ -320,9 +326,14 @@ class Engine:
             pipeline.set_state(Gst.State.NULL)
         self.click_source = None
         with self._lock:
-            if self.writer:
-                self.writer.close()
+            try:
+                if self.writer:
+                    self.writer.close()
+            finally:
                 self.writer = None
+                if self._take_file:
+                    self._take_file.close()
+                    self._take_file = None
         self.mode = "idle"
         self.peak_db = -90
 

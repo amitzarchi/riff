@@ -67,9 +67,12 @@ class Waveform(Gtk.DrawingArea):
         self.pointer_x = None
         self.set_content_height(138)
         self.set_draw_func(self.draw)
-        gesture = Gtk.GestureClick()
+        gesture = Gtk.GestureClick(button=Gdk.BUTTON_PRIMARY)
         gesture.connect("pressed", self.clicked)
         self.add_controller(gesture)
+        right_click = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
+        right_click.connect("pressed", self.right_clicked)
+        self.add_controller(right_click)
         motion = Gtk.EventControllerMotion()
         motion.connect("enter", self.pointer_moved)
         motion.connect("motion", self.pointer_moved)
@@ -78,7 +81,7 @@ class Waveform(Gtk.DrawingArea):
         scroll.connect("scroll", self.scrolled)
         self.add_controller(scroll)
         self.set_cursor_from_name("crosshair")
-        self.set_tooltip_text("Click to seek · Ctrl+scroll to zoom · Shift+scroll to pan")
+        self.set_tooltip_text("Left-click to seek · right-click to set start & play · Ctrl+scroll to zoom")
 
     def pointer_moved(self, _controller, x, _y):
         self.pointer_x = x
@@ -88,6 +91,30 @@ class Waveform(Gtk.DrawingArea):
 
     def clicked(self, _gesture, _n, x, _y):
         self.window.seek(self.window.timeline.time_at(self.fraction_at(x)))
+
+    def right_clicked(self, _gesture, _n, x, _y):
+        self.window.play_from(self.window.timeline.time_at(self.fraction_at(x)))
+
+    def draw_start_marker(self, cr, width, height):
+        start = self.window.playback_start
+        if start <= 0 or not self.window.timeline.contains(start):
+            return
+        x = 20 + self.window.timeline.fraction_at(start) * max(1, width - 40)
+        color = self.window.colors["backing_color"]
+        cr.save()
+        cr.set_source_rgba(*(int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)), 0.9)
+        cr.set_line_width(1)
+        cr.set_dash([4, 3])
+        cr.move_to(x + 0.5, 29)
+        cr.line_to(x + 0.5, height - 14)
+        cr.stroke()
+        cr.set_dash([])
+        cr.move_to(x, 21)
+        cr.line_to(x + 9, 25)
+        cr.line_to(x, 29)
+        cr.close_path()
+        cr.fill()
+        cr.restore()
 
     def scrolled(self, controller, dx, dy):
         modifiers = controller.get_current_event_state()
@@ -147,6 +174,7 @@ class Waveform(Gtk.DrawingArea):
             text_width = cr.text_extents(self.placeholder).width
             cr.move_to(max(left, (width - text_width) / 2), center - 10)
             cr.show_text(self.placeholder)
+        self.draw_start_marker(cr, width, height)
         position = self.window.position
         if view.contains(position):
             x = left + view.fraction_at(position) * span
@@ -205,6 +233,7 @@ class BeatGrid(Waveform):
         color("muted_text")
         cr.move_to(left, height - 13)
         cr.show_text("4/4  ·  Not in exports")
+        self.draw_start_marker(cr, width, height)
         if view.contains(position):
             color("error_color" if self.window.engine.mode == "record" else "foreground", 0.9)
             x = left + view.fraction_at(position) * span
@@ -426,6 +455,16 @@ class Window(Gtk.ApplicationWindow):
     def metronome_settings(self):
         return MetronomeSettings.from_session(self.session.data)
 
+    @property
+    def playback_start(self):
+        durations = []
+        if backing := self.session.data.get("backing"):
+            durations.append(backing["duration"])
+        if take := self.session.selected:
+            durations.append(take["duration"] + self.session.data.get("alignment_ms", 0) / 1000)
+        limit = max(0, (max(durations) if durations else self.duration) - 0.05)
+        return max(0.0, min(limit, float(self.session.data.get("playback_start", 0))))
+
     def build(self):
         header = Gtk.HeaderBar()
         brand = box(spacing=10, children=[label("≋", ["brand", "backing-accent"]), label("riff", ["brand"])])
@@ -457,10 +496,10 @@ class Window(Gtk.ApplicationWindow):
 
         transport = box(spacing=8)
         transport.add_css_class("transport")
-        self.record_button = button("●  Record", callback=self.record, classes=["record"], tooltip="Record a new take from the beginning · R")
+        self.record_button = button("●  Record", callback=self.record, classes=["record"], tooltip="Record a new take from the start marker · R")
         self.play_button = button(icon="media-playback-start-symbolic", callback=self.play, classes=["flat"], tooltip="Play / pause · Space")
         self.stop_button = button(icon="media-playback-stop-symbolic", callback=self.stop, classes=["flat"], tooltip="Stop · Esc")
-        self.rewind_button = button(icon="media-skip-backward-symbolic", callback=lambda: self.seek(0), classes=["flat"], tooltip="Back to start · Home")
+        self.rewind_button = button(icon="media-skip-backward-symbolic", callback=self.rewind, classes=["flat"], tooltip="Reset start marker & rewind · Home")
         for child in (self.record_button, self.play_button, self.stop_button, self.rewind_button):
             transport.append(child)
         self.loop_button = Gtk.ToggleButton(icon_name="media-playlist-repeat-symbolic", tooltip_text="Loop playback")
@@ -476,7 +515,9 @@ class Window(Gtk.ApplicationWindow):
         transport.append(self.clock)
         content.append(transport)
 
-        zoom_row = box(spacing=6, children=[label("TIMELINE", ["eyebrow"]), Gtk.Box(hexpand=True)])
+        self.start_button = button("Start 00:00.0", callback=self.rewind, classes=["flat", "small"],
+                                   tooltip="Right-click a track to set the start marker · click here or Home to reset")
+        zoom_row = box(spacing=6, children=[self.start_button, Gtk.Box(hexpand=True)])
         self.timeline_range = label("", ["small", "muted", "mono"])
         zoom_row.append(self.timeline_range)
         self.zoom_out_button = button(icon="zoom-out-symbolic", callback=lambda: self.zoom(0.5),
@@ -612,6 +653,8 @@ class Window(Gtk.ApplicationWindow):
             finally:
                 self._updating_timeline = False
         self.timeline_range.set_text(f"{timecode(view.start, True)} – {timecode(view.end, True)}")
+        self.start_button.set_label(f"Start {timecode(self.playback_start, True)}")
+        self.start_button.set_sensitive(not self.busy and self.engine.mode != "record")
         self.zoom_out_button.set_sensitive(not view.fitted)
         self.zoom_fit_button.set_sensitive(not view.fitted)
         self.zoom_in_button.set_sensitive(view.span > view.minimum_span)
@@ -761,7 +804,8 @@ class Window(Gtk.ApplicationWindow):
     def load_session(self):
         self._loading = True
         self.tap_tempo.reset()
-        self.position = 0
+        self.session.data["playback_start"] = self.playback_start
+        self.position = self.playback_start
         self.timeline.set_duration(self.duration)
         self.timeline.fit()
         self.name_entry.set_text(self.session.data["name"])
@@ -779,6 +823,12 @@ class Window(Gtk.ApplicationWindow):
         self.save()
 
     def refresh_tracks(self):
+        if self.session.data.get("playback_start", 0) != self.playback_start:
+            self.session.data["playback_start"] = self.playback_start
+            if self.engine.mode in ("idle", "meter"):
+                self.position = self.playback_start
+                self.timeline.reveal(self.position)
+            self.save()
         self.update_timeline()
         self._peaks_version += 1
         version = self._peaks_version
@@ -854,8 +904,8 @@ class Window(Gtk.ApplicationWindow):
             self.notice("Choose an input in Audio settings first.", True)
             return
         self.engine.stop()
-        self.position = 0
-        self.timeline.reveal(0)
+        self.position = self.playback_start
+        self.timeline.reveal(self.position)
         self.update_timeline()
         self.pending_take = self.session.next_take()
         self._peaks_version += 1
@@ -870,7 +920,7 @@ class Window(Gtk.ApplicationWindow):
             self.engine.capture(self.input, self.pair, self.session.path(self.pending_take),
                                 self.session.path(backing) if backing else None,
                                 self.backing_slider.get_value(), self.output,
-                                metronome=self.metronome_settings)
+                                metronome=self.metronome_settings, position=self.position)
             self.guitar_name.set_text(self.pending_take["name"] + " · recording")
             self.notice("Recording a new take · press R or Esc to stop")
         except Exception as error:
@@ -879,10 +929,14 @@ class Window(Gtk.ApplicationWindow):
 
     def finish_take(self):
         self.engine.stop()
+        recorded = self.engine.frames
         if self.pending_take:
             take, self.pending_take = self.pending_take, None
             try:
-                self.session.commit_take(take)
+                if recorded:
+                    self.session.commit_take(take)
+                else:
+                    self.session.path(take).unlink(missing_ok=True)
                 self.save()
             except (OSError, ValueError) as error:
                 self.notice(f"Could not finish the take: {error}", True)
@@ -892,8 +946,8 @@ class Window(Gtk.ApplicationWindow):
     def stop(self, meter=True):
         was_recording = self.pending_take is not None
         self.finish_take()
-        self.position = 0
-        self.timeline.reveal(0)
+        self.position = self.playback_start
+        self.timeline.reveal(self.position)
         self.update_timeline()
         if was_recording:
             self.notice("Take saved · ready for another")
@@ -922,6 +976,25 @@ class Window(Gtk.ApplicationWindow):
         except Exception as error:
             self.audio_error(str(error))
 
+    def play_from(self, seconds):
+        if self.busy or self.engine.mode == "record":
+            return
+        self.session.data["playback_start"] = max(0.0, seconds)
+        self.session.data["playback_start"] = self.playback_start
+        self.seek(self.playback_start)
+        self.save()
+        if self.engine.mode != "play":
+            self.play()
+        if self.engine.mode == "play":
+            self.notice(f"Start marker · {timecode(self.playback_start, True)} · Home to reset")
+
+    def rewind(self):
+        if self.busy or self.engine.mode == "record":
+            return
+        self.session.data["playback_start"] = 0.0
+        self.save()
+        self.seek(0)
+
     def seek(self, seconds):
         if self.busy or self.engine.mode == "record":
             return
@@ -938,7 +1011,7 @@ class Window(Gtk.ApplicationWindow):
 
     def audio_end(self):
         if self.engine.mode == "play" and self.loop:
-            self.engine.seek(0)
+            self.engine.seek(self.playback_start)
             return
         if self.engine.mode == "meter":
             self.engine.stop()
@@ -1055,7 +1128,7 @@ class Window(Gtk.ApplicationWindow):
         self.session.data["backing"] = item
         self.save()
         self.refresh_tracks()
-        self.notice("Backing track ready · Record starts a fresh take from the beginning")
+        self.notice("Backing track ready · Record starts a fresh take from the start marker")
 
     def export_dialog(self, guitar_only=False):
         if self.busy or self.engine.mode == "record":
@@ -1129,7 +1202,7 @@ class Window(Gtk.ApplicationWindow):
         body = margins(box(vertical=True, spacing=16), 24)
         body.append(label("A little room to play.", ["track-name"]))
         body.append(button("Open saved session…", callback=lambda: (dialog.close(), self.open_session()), classes=["outlined"]))
-        for text in ("Space         Play / pause", "R                 Record / finish take", "M                Toggle metronome", "T                 Tap tempo", "Esc              Stop", "Home          Back to start", "Ctrl+ + / −   Zoom in / out", "Ctrl+0         Fit timeline", "Ctrl+O         Add backing track", "Ctrl+N         New session", "Ctrl+E          Export mix"):
+        for text in ("Space         Play / pause", "R                 Record / finish take", "M                Toggle metronome", "T                 Tap tempo", "Esc              Stop / return to start", "Home          Reset start & rewind", "Ctrl+ + / −   Zoom in / out", "Ctrl+0         Fit timeline", "Ctrl+O         Add backing track", "Ctrl+N         New session", "Ctrl+E          Export mix"):
             body.append(label(text, ["mono", "small", "muted"]))
         hint = label("Sessions & takes live in ~/Music/Riff.\nNo account. No cloud. Just audio.", ["small", "muted"])
         body.append(hint)
@@ -1235,7 +1308,7 @@ class Window(Gtk.ApplicationWindow):
             actions = {Gdk.KEY_space: self.play, Gdk.KEY_r: self.record, Gdk.KEY_R: self.record,
                        Gdk.KEY_m: self.toggle_metronome, Gdk.KEY_M: self.toggle_metronome,
                        Gdk.KEY_t: self.tap_metronome, Gdk.KEY_T: self.tap_metronome,
-                       Gdk.KEY_Escape: self.stop, Gdk.KEY_Home: lambda: self.seek(0)}
+                       Gdk.KEY_Escape: self.stop, Gdk.KEY_Home: self.rewind}
         action = actions.get(key)
         if action:
             action()

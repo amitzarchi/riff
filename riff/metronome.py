@@ -69,10 +69,11 @@ def _click(frequency):
 
 
 class ClickSource:
-    def __init__(self, bpm=120, duration=None, alignment_ms=0):
+    def __init__(self, bpm=120, duration=None, alignment_ms=0, position=0.0):
         self.bpm = bpm
         self.alignment_ms = alignment_ms
         self.frame = 0
+        self.origin = round(position * RATE)
         self.end = round(duration * RATE) if duration is not None else None
         self._clicks = (_click(1100), _click(1760))
         self._lock = threading.Lock()
@@ -111,7 +112,7 @@ class ClickSource:
             start = self.frame
             count = 1024 if self.end is None else min(1024, self.end - start)
             if count > 0:
-                raw = self.render(start, count)
+                raw = self.render(start + self.origin, count)
                 self.frame += count
         if count <= 0:
             source.emit("end-of-stream")

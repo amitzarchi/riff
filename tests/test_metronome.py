@@ -214,6 +214,26 @@ class MetronomeIntegration(unittest.TestCase):
         self.assertEqual(restored, MetronomeSettings(True, 240, 0.6, 125))
         self.assertEqual(MetronomeSettings.from_session({}), MetronomeSettings())
 
+    def test_offset_recording_click_uses_the_absolute_session_beats(self):
+        self.engine.capture(Device("test", "Silent input", 2), (0, 1), self.root / "take.wav",
+                            source_override="audiotestsrc is-live=true wave=silence", position=0.625,
+                            test_sink="appsink name=render sync=false max-buffers=16",
+                            metronome=MetronomeSettings(True, 240, 0.6, 125))
+        sink = self.engine.pipeline.get_by_name("render")
+        rendered = array("f")
+        while len(rendered) < round(0.4 * RATE) * 2:
+            sample = sink.emit("try-pull-sample", 2 * Gst.SECOND)
+            self.assertIsNotNone(sample)
+            buffer = sample.get_buffer()
+            rendered.frombytes(buffer.extract_dup(0, buffer.get_size()))
+        spin_until(lambda: self.engine.frames > 0.1 * RATE or self.errors)
+        self.engine.stop()
+        self.assertEqual(self.errors, [])
+        times = self.click_times(rendered)
+        self.assertEqual(len(times), 2)
+        self.assertAlmostEqual(times[0], 0, delta=0.0005)
+        self.assertAlmostEqual(times[1], 0.25, delta=0.0005)
+
 
 if __name__ == "__main__":
     unittest.main()

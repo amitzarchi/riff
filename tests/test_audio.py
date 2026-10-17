@@ -10,7 +10,7 @@ from pathlib import Path
 from gi.repository import GLib
 
 from riff.audio import Device, Engine
-from riff.storage import RATE, Session, export_audio, import_backing, read_peaks, run_ffmpeg
+from riff.storage import RATE, Session, export_audio, import_backing, open_take, read_peaks, run_ffmpeg
 
 
 def spin_until(predicate, seconds=5):
@@ -151,6 +151,59 @@ class AudioIntegration(unittest.TestCase):
         self.assertEqual(reopened.selected["file"], take["file"])
         self.assertAlmostEqual(reopened.selected["duration"], 0.2, delta=0.01)
         self.assertEqual(len(Session.open(self.session.folder).data["takes"]), 1)
+
+    def test_recording_from_offset_seeks_backing_and_aligns_saved_guitar(self):
+        backing = self.signal_file("backing-offset.wav", [220, 220], 1.2)
+        incoming = self.signal_file("incoming.wav", [880, 1100], 0.3)
+        take = self.session.next_take()
+        position = 0.625
+        self.engine.capture(Device("test", "Test input", 2), (0, 1), self.session.path(take),
+                            backing=backing, backing_gain=1, position=position,
+                            source_override=f'filesrc location="{incoming}" ! wavparse',
+                            test_sink="appsink name=render sync=false max-buffers=200")
+        sink = self.engine.pipeline.get_by_name("render")
+        rendered = array("f")
+        while sample := sink.emit("try-pull-sample", 2_000_000_000):
+            buffer = sample.get_buffer()
+            rendered.frombytes(buffer.extract_dup(0, buffer.get_size()))
+        spin_until(lambda: self.ended or self.errors)
+        self.assertEqual(self.errors, [])
+        self.assertAlmostEqual(self.engine.position, 0.925, delta=0.001)
+        self.engine.stop()
+        expected = pcm16(backing)[round(position * RATE) * 2:]
+        self.assertEqual(len(rendered), len(expected))
+        self.assertLess(max(abs(actual - wanted / 32768) for actual, wanted in zip(rendered, expected)), 0.00005)
+        self.session.commit_take(take)
+        saved = pcm16(self.session.path(take))
+        prefix = round(position * RATE) * 2
+        self.assertEqual(max(abs(value) for value in saved[:prefix]), 0)
+        self.assertEqual(saved[prefix:], pcm16(incoming))
+        destination = self.root / "offset-guitar-export.wav"
+        export_audio(self.session, destination, guitar_only=True)
+        exported = pcm16(destination)
+        self.assertLessEqual(max(abs(value) for value in exported[:prefix]), 1)
+        self.assertGreater(max(abs(value) for value in exported[prefix:]), 100)
+        self.assertAlmostEqual(take["duration"], 0.925, delta=0.001)
+
+    def test_long_start_creates_sparse_silence_and_recovers_on_the_timeline(self):
+        take = self.session.next_take()
+        path = self.session.path(take)
+        start_frames = 1200 * RATE
+        writer, output = open_take(path, start_frames)
+        try:
+            writer.writeframes(b"\x01\0\0" * 2 * 100)
+        finally:
+            writer.close()
+            output.close()
+        with wave.open(str(path)) as audio:
+            self.assertEqual(audio.getnframes(), start_frames + 100)
+            self.assertEqual(audio.readframes(100), bytes(600))
+            audio.setpos(start_frames)
+            self.assertEqual(audio.readframes(100), b"\x01\0\0" * 2 * 100)
+        self.assertGreater(path.stat().st_size, 300_000_000)
+        self.assertLess(path.stat().st_blocks * 512, 1_000_000)
+        restored = Session.open(self.session.folder)
+        self.assertAlmostEqual(restored.selected["duration"], 1200 + 100 / RATE, delta=0.0001)
 
 
 if __name__ == "__main__":
