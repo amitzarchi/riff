@@ -17,7 +17,7 @@ riff
 Or run `./run` directly. Installation adds a **Riff** desktop launcher and
 `~/.local/bin/riff`; the source stays in this directory.
 The header and launcher use `assets/wave-triangle.svg` as a theme-adaptive symbolic icon.
-The three header actions use bundled [Phosphor Icons](https://github.com/phosphor-icons/core)
+The four header actions use bundled [Phosphor Icons](https://github.com/phosphor-icons/core)
 in regular weight; their MIT license is in `assets/PHOSPHOR-LICENSE`.
 
 Runtime packages on Arch: `python`, `python-gobject`, `python-cairo`, `gtk4`,
@@ -67,7 +67,8 @@ Deleting the selected take stops playback and selects the next remaining take
 and imports/exports. If Trash is unavailable, removed audio stays in a
 `deleted-takes-…` folder inside the session instead.
 
-Turn on **Webcam** in the header to show a live camera preview in the right half
+Turn on the circular **Webcam** icon toggle, left of the folder in the header,
+to show a live camera preview in the right half
 of the app. Drag the divider to resize the two panels. Select an input in the
 camera dropdown; **Refresh** finds newly connected cameras and retries the preview.
 The camera selection, panel split, and webcam mode are remembered. Turning Webcam
