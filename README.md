@@ -38,8 +38,8 @@ yt-dlp (Deno is installed on this machine).
    click volume. It follows playback and recording in 4/4, accenting the first beat.
    The click is monitor only: it never enters a take, the mix export, or guitar export.
    Use **Align** to shift clicks against the backing: negative milliseconds move them
-   earlier, positive values delay them. The range is −60,000 to +60,000 ms, in 1 ms
-   steps; type a value for a longer intro, or use the reset button to return to zero.
+   earlier, positive values delay them. The range is −60,000 to +60,000 ms. The −/+
+   buttons step by 10 ms; type an exact millisecond value, or reset to return to zero.
    Set the BPM to match the backing, then adjust Align until the beats line up.
    Click **Tap** (or press **T**) at least twice to set BPM from your rhythm. More
    taps smooth the estimate over the last four beats; pause for 3 seconds to start
