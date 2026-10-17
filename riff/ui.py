@@ -475,7 +475,7 @@ class Window(Gtk.ApplicationWindow):
         logo.add_css_class("backing-accent")
         brand = box(spacing=10, children=[logo, label("riff", ["brand"])])
         header.pack_start(brand)
-        header.set_title_widget(label("GUITAR RECORDER", ["eyebrow"]))
+        header.set_title_widget(Gtk.Box())
         self.folder_button = button(icon="folder-open-symbolic", callback=self.open_folder,
                                     classes=["flat"], tooltip="Show session files")
         header.pack_end(button(icon="open-menu-symbolic", callback=self.show_menu, classes=["flat"], tooltip="Session & shortcuts"))
