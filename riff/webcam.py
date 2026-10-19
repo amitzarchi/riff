@@ -92,6 +92,7 @@ class Recording:
     source_override: str | None = None
     preview_sink: str | None = None
     quality: Quality = BALANCED
+    mirrored: bool = False
 
     @property
     def mode(self):
@@ -134,14 +135,18 @@ def require_elements(*names):
                            ". Install gst-plugin-gtk4 and gst-plugins-good.")
 
 
-def source(camera, override=None, mode=None):
+def source(camera, override=None, mode=None, mirrored=False):
     mode = mode or capture_mode(camera)
     capture = override or f"v4l2src device={json.dumps(camera.name)} do-timestamp=true"
     if mode.input_caps:
         capture += f" ! capsfilter caps={json.dumps(mode.input_caps)}"
+    flip = ""
+    if mirrored:
+        require_elements("videoflip")
+        flip = " ! videoflip video-direction=horiz"
     return (f"{capture} ! decodebin ! videoconvert ! videoscale ! videorate ! "
             f"video/x-raw,format=I420,width={mode.width},height={mode.height},"
-            f"framerate={mode.fps_num}/{mode.fps_den},pixel-aspect-ratio=1/1")
+            f"framerate={mode.fps_num}/{mode.fps_den},pixel-aspect-ratio=1/1{flip}")
 
 
 def preview_sink(override=None, sync=False):
@@ -162,7 +167,7 @@ def recording_branch(recording):
     mode = recording.mode
     threads = 4 if recording.quality == HIGH else 2
     return (
-        f"{source(recording.camera, recording.source_override, mode)} ! tee name=camera_tee "
+        f"{source(recording.camera, recording.source_override, mode, recording.mirrored)} ! tee name=camera_tee "
         "camera_tee. ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream ! "
         f"{preview_sink(recording.preview_sink)} "
         f"camera_tee. ! queue ! vp8enc deadline=1 cpu-used=4 threads={threads} "
@@ -181,11 +186,11 @@ class Preview:
         self.pipeline = self.bus = None
         self.mode = None
 
-    def start(self, camera, source_override=None, test_sink=None, quality=BALANCED):
+    def start(self, camera, source_override=None, test_sink=None, quality=BALANCED, mirrored=False):
         self.stop()
         try:
             self.mode = capture_mode(camera, quality)
-            description = f"{source(camera, source_override, self.mode)} ! {preview_sink(test_sink)}"
+            description = f"{source(camera, source_override, self.mode, mirrored)} ! {preview_sink(test_sink)}"
             self.pipeline = Gst.parse_launch(description)
             self.bus = self.pipeline.get_bus()
             self.bus.add_signal_watch()

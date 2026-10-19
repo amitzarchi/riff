@@ -77,7 +77,10 @@ The **Quality** selector offers **High · 1080p** (default, 8 Mbps target) and
 camera mode and shows the resolution/frame rate actually in use. Cameras with
 lower limits use their supported size/rate without upscaling; the preview labels
 this as **camera limit**. A 720p/30 fps mode is preferred over a 1080p/15 fps mode.
-The camera selection, quality, panel split, and webcam mode are remembered. Turning Webcam
+Turn on **Mirror video** beneath Quality to flip the preview and new recordings
+left to right. The flip is saved in the video itself, so playback, external players,
+and MP4 exports keep the same orientation. Existing recordings keep their saved orientation.
+The camera selection, quality, mirror setting, panel split, and webcam mode are remembered. Turning Webcam
 off releases the camera and returns to the full-width audio workspace.
 
 With Webcam on, **Record / R** saves a **WebM at the selected quality** beside the usual
@@ -101,7 +104,7 @@ filename in the export dialog to save an audio-only mix instead. Video exports
 use H.264 at CRF 18 with the `medium` preset and stereo 48 kHz / 192 kbps AAC audio;
 exports retain the recorded resolution and may take longer to encode.
 The original guitar takes remain lossless 48 kHz / 24-bit stereo WAV.
-Camera selection, quality, and webcam mode stay fixed while recording. If a camera fails,
+Camera selection, quality, mirroring, and webcam mode stay fixed while recording. If a camera fails,
 Riff preserves the audio captured so far. Audio-only operation does not need a camera.
 
 Use the timeline's **zoom in / out** buttons or **Ctrl++ / Ctrl+−** to inspect a
@@ -246,7 +249,9 @@ and verify duration, backing/guitar levels, metronome exclusion, start markers,
 camera errors, preview release, and video recovery. Take-deletion checks cover
 paired audio/video removal and rollback. Quality checks cover native raw/JPEG
 camera modes, smaller/slower camera fallbacks, and full-resolution 1080p recording
-and export. MP4 export tests decode picture and audio
+and export. Mirror checks compare asymmetric frames in live preview, saved video,
+playback, and MP4 export, and verify that audio levels stay intact.
+MP4 export tests decode picture and audio
 to check current mix levels, exact clip duration, both alignment directions,
 and preserved source files. Failed exports preserve the existing destination.
 Native GTK previews exercise the split panel, camera selection, recording controls,

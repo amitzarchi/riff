@@ -391,6 +391,7 @@ class Window(Gtk.ApplicationWindow):
         self.settings = read_json(STATE_DIR / "settings.json")
         self.video_quality = next((quality for quality in QUALITIES
                                    if quality.key == self.settings.get("webcam_quality")), HIGH)
+        self.video_mirrored = bool(self.settings.get("webcam_mirrored", False))
         self.engine = Engine(self.audio_error, self.audio_end)
         self.camera_preview = Preview(self.webcam_error)
         self.take_video = Playback(self.take_video_error)
@@ -670,6 +671,11 @@ class Window(Gtk.ApplicationWindow):
         self.camera_quality.set_tooltip_text("Recording quality · uses the camera's supported resolution and frame rate")
         self.camera_quality.connect("notify::selected", self.camera_quality_changed)
         self.camera_controls.append(box(spacing=8, children=[label("Quality", ["small", "muted"]), self.camera_quality]))
+        self.camera_mirror = Gtk.ToggleButton(label="Mirror video", active=self.video_mirrored,
+                                            tooltip_text="Flip the preview and new recordings left to right")
+        self.camera_mirror.add_css_class("flat")
+        self.camera_mirror.connect("toggled", self.camera_mirror_changed)
+        self.camera_controls.append(box(children=[self.camera_mirror]))
         panel.append(self.camera_controls)
         self.camera_picture = Gtk.Picture(hexpand=True, vexpand=True, can_shrink=True,
                                           content_fit=Gtk.ContentFit.CONTAIN)
@@ -781,6 +787,19 @@ class Window(Gtk.ApplicationWindow):
         self.save()
         self.start_webcam_preview()
 
+    def camera_mirror_changed(self, toggle):
+        if self._camera_loading:
+            return
+        if self.busy or self.engine.mode == "record" or self.showing_take_video:
+            self._camera_loading = True
+            toggle.set_active(self.video_mirrored)
+            self._camera_loading = False
+            return
+        self.video_mirrored = toggle.get_active()
+        self.settings["webcam_mirrored"] = self.video_mirrored
+        self.save()
+        self.start_webcam_preview()
+
     def start_webcam_preview(self):
         if self.closed or not self.webcam_enabled or self.engine.mode == "record" or self.showing_take_video:
             return False
@@ -791,7 +810,7 @@ class Window(Gtk.ApplicationWindow):
             self.camera_status.set_text("No camera input")
             return False
         try:
-            preview = self.camera_preview.start(self.camera, quality=self.video_quality)
+            preview = self.camera_preview.start(self.camera, quality=self.video_quality, mirrored=self.video_mirrored)
             self.camera_picture.set_paintable(preview)
             self.camera_placeholder.set_visible(preview is None)
             mode = self.camera_preview.mode
@@ -1244,7 +1263,7 @@ class Window(Gtk.ApplicationWindow):
             if self.webcam_enabled:
                 video = Recording(self.camera, self.session.path(self.pending_take).with_suffix(".webm"),
                                   self.guitar_slider.get_value(), self.session.data.get("alignment_ms", 0),
-                                  quality=self.video_quality)
+                                  quality=self.video_quality, mirrored=self.video_mirrored)
                 self.camera_picture.set_paintable(None)
                 self.camera_preview.stop()
             self.engine.capture(self.input, self.pair, self.session.path(self.pending_take),
@@ -1416,6 +1435,7 @@ class Window(Gtk.ApplicationWindow):
         self.webcam_toggle.set_sensitive(not self.busy and not recording)
         self.camera_select.set_sensitive(not self.busy and not recording and bool(self.camera_devices))
         self.camera_quality.set_sensitive(not self.busy and not recording and not self.showing_take_video)
+        self.camera_mirror.set_sensitive(not self.busy and not recording and not self.showing_take_video)
         self.camera_refresh.set_sensitive(not self.busy and not recording)
         self.open_video_button.set_sensitive(not self.busy and not recording and
                                              bool(self.session.video_path(self.session.selected)))

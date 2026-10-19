@@ -40,12 +40,13 @@ class WebcamIntegration(unittest.TestCase):
         return path
 
     def record(self, backing=None, duration=0.65, position=0, silent=False, gain=1, metronome=None, source=None,
-               quality=BALANCED, camera=None):
+               quality=BALANCED, camera=None, mirrored=False):
         take = self.session.next_take()
         self.session.data['playback_start'] = position
         video = Recording(camera or Camera('generated', 'Test camera'), self.session.path(take).with_suffix('.webm'),
                           gain, source_override=source or 'videotestsrc is-live=true pattern=ball',
-                          preview_sink='fakesink name=camera_preview sync=false async=false', quality=quality)
+                          preview_sink='fakesink name=camera_preview sync=false async=false', quality=quality,
+                          mirrored=mirrored)
         self.engine.capture(Device('test', 'Generated input', 2), (0, 1), self.session.path(take), backing,
                             source_override=('audiotestsrc is-live=true wave=silence' if silent else
                                              'audiotestsrc is-live=true wave=sine freq=880 volume=0.2'),
@@ -78,6 +79,61 @@ class WebcamIntegration(unittest.TestCase):
         real = sum(value * math.cos(index * angle) for index, value in enumerate(values))
         imaginary = sum(value * math.sin(index * angle) for index, value in enumerate(values))
         return 2 * math.hypot(real, imaginary) / len(values)
+
+    @staticmethod
+    def luma_edges(raw, width, height):
+        row = height // 4 * width
+        return raw[row + width // 16], raw[row + width - width // 16]
+
+    def decoded_edges(self, path):
+        raw = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(path), '-frames:v', '1',
+                                       '-vf', 'scale=160:120', '-pix_fmt', 'gray', '-f', 'rawvideo', 'pipe:1'])
+        return self.luma_edges(raw, 160, 120)
+
+    def test_preview_mirror_flips_horizontally_and_can_be_turned_off(self):
+        preview = Preview(self.errors.append)
+        camera = Camera('generated', 'Camera', 'video/x-raw,width=640,height=480,framerate=30/1')
+        try:
+            for mirrored in (False, True, False):
+                with self.subTest(mirrored=mirrored):
+                    preview.start(camera, source_override='videotestsrc is-live=true pattern=smpte', mirrored=mirrored,
+                                  test_sink='videoconvert ! video/x-raw,format=GRAY8 ! '
+                                            'appsink name=camera_preview sync=false max-buffers=1 drop=true')
+                    sample = preview.pipeline.get_by_name('camera_preview').emit('try-pull-sample', Gst.SECOND)
+                    self.assertIsNotNone(sample)
+                    buffer = sample.get_buffer()
+                    left, right = self.luma_edges(buffer.extract_dup(0, buffer.get_size()), 640, 480)
+                    self.assertGreater(right - left if mirrored else left - right, 100)
+            self.assertEqual(self.errors, [])
+        finally:
+            preview.stop()
+
+    def test_mirrored_recording_playback_and_export_keep_one_horizontal_flip(self):
+        camera = Camera('generated', 'Camera', 'video/x-raw,width=640,height=480,framerate=30/1')
+        take, video = self.record(self.backing('0.2*sin(2*PI*220*t)'), camera=camera, mirrored=True,
+                                  source='videotestsrc is-live=true pattern=smpte')
+        left, right = self.decoded_edges(video)
+        self.assertGreater(right - left, 100)
+        player = Playback(self.errors.append)
+        try:
+            player.start(video, test_sink='videoconvert ! video/x-raw,format=GRAY8 ! '
+                                         'appsink name=camera_preview sync=true max-buffers=1')
+            sample = player.pipeline.get_by_name('camera_preview').emit('try-pull-preroll', Gst.SECOND)
+            self.assertIsNotNone(sample)
+            buffer = sample.get_buffer()
+            left, right = self.luma_edges(buffer.extract_dup(0, buffer.get_size()), 640, 480)
+            self.assertGreater(right - left, 100)
+        finally:
+            player.stop()
+        exported = self.root / 'mirrored.mp4'
+        export_video(self.session, exported)
+        left, right = self.decoded_edges(exported)
+        self.assertGreater(right - left, 100)
+        values = self.video_audio(exported)
+        self.assertAlmostEqual(self.tone(values, 880), 0.2, delta=0.02)
+        self.assertAlmostEqual(self.tone(values, 220), 0.13, delta=0.02)
+        self.assertEqual(self.errors, [])
+        self.assertEqual(Session.open(self.session.folder).selected['video'], video.name)
 
     def test_video_has_playable_frames_and_the_guitar_backing_mix_at_the_capture_duration(self):
         take, video = self.record(self.backing('0.2*sin(2*PI*220*t)'), gain=0.5)
