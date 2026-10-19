@@ -72,10 +72,15 @@ Turn on the circular **Webcam** icon toggle, left of the folder in the header,
 to show a live camera preview in the right half
 of the app. Drag the divider to resize the two panels. Select an input in the
 camera dropdown; **Refresh** finds newly connected cameras and retries the preview.
-The camera selection, panel split, and webcam mode are remembered. Turning Webcam
+The **Quality** selector offers **High · 1080p** (default, 8 Mbps target) and
+**Balanced · 720p** (2.5 Mbps target), both targeting 30 fps. Riff requests a native
+camera mode and shows the resolution/frame rate actually in use. Cameras with
+lower limits use their supported size/rate without upscaling; the preview labels
+this as **camera limit**. A 720p/30 fps mode is preferred over a 1080p/15 fps mode.
+The camera selection, quality, panel split, and webcam mode are remembered. Turning Webcam
 off releases the camera and returns to the full-width audio workspace.
 
-With Webcam on, **Record / R** saves a **720p / 30 fps WebM** beside the usual
+With Webcam on, **Record / R** saves a **WebM at the selected quality** beside the usual
 lossless guitar WAV. The video contains the guitar and backing mix, with their
 current volumes and alignment; the metronome and webcam microphone are excluded.
 Both streams share a clock. Recording starts from the saved start marker, with
@@ -93,8 +98,10 @@ The saved video keeps the mix as recorded; the WAV remains editable.
 alignment, without the metronome or the clip's original audio. The export starts
 and ends with the recorded video, trimming the mix to the same interval. Use a `.wav`
 filename in the export dialog to save an audio-only mix instead. Video exports
-use H.264 video and stereo 48 kHz AAC audio; the original takes stay lossless.
-Camera selection and webcam mode stay fixed while recording. If a camera fails,
+use H.264 at CRF 18 with the `medium` preset and stereo 48 kHz / 192 kbps AAC audio;
+exports retain the recorded resolution and may take longer to encode.
+The original guitar takes remain lossless 48 kHz / 24-bit stereo WAV.
+Camera selection, quality, and webcam mode stay fixed while recording. If a camera fails,
 Riff preserves the audio captured so far. Audio-only operation does not need a camera.
 
 Use the timeline's **zoom in / out** buttons or **Ctrl++ / Ctrl+−** to inspect a
@@ -237,7 +244,9 @@ and the guitar's leading silence survives export and interrupted-session recover
 Webcam tests record generated video with real stereo audio, decode the saved WebM,
 and verify duration, backing/guitar levels, metronome exclusion, start markers,
 camera errors, preview release, and video recovery. Take-deletion checks cover
-paired audio/video removal and rollback. MP4 export tests decode picture and audio
+paired audio/video removal and rollback. Quality checks cover native raw/JPEG
+camera modes, smaller/slower camera fallbacks, and full-resolution 1080p recording
+and export. MP4 export tests decode picture and audio
 to check current mix levels, exact clip duration, both alignment directions,
 and preserved source files. Failed exports preserve the existing destination.
 Native GTK previews exercise the split panel, camera selection, recording controls,

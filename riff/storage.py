@@ -341,8 +341,8 @@ def export_video(session: Session, destination: Path):
     filters += f";[out]apad[audio];[{video_index}:v:0]setpts=PTS-STARTPTS[video]"
     try:
         run_ffmpeg([*inputs, "-i", str(video), "-filter_complex", filters,
-                    "-map", "[video]", "-map", "[audio]", "-shortest", "-c:v", "libx264", "-preset", "veryfast",
-                    "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                    "-map", "[video]", "-map", "[audio]", "-shortest", "-c:v", "libx264", "-preset", "medium",
+                    "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                     "-ar", str(RATE), "-ac", "2", "-movflags", "+faststart", "-n", str(temporary)])
         temporary.replace(destination)
     finally:

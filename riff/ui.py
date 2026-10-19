@@ -16,7 +16,7 @@ from .audio import Engine, amplitude, devices  # noqa: E402
 from .download import DownloadCancelled, YouTubeDownload  # noqa: E402
 from .metronome import ALIGNMENT_LIMIT_MS, MAX_GAIN, MetronomeSettings, TapTempo  # noqa: E402
 from .timeline import Timeline  # noqa: E402
-from .webcam import Playback, Preview, Recording, cameras  # noqa: E402
+from .webcam import HIGH, QUALITIES, Playback, Preview, Recording, cameras  # noqa: E402
 from .storage import (PEAK_RATE, STATE_DIR, Session, atomic_json, export_audio, export_video,  # noqa: E402
                       import_backing, read_json, read_peaks)
 
@@ -389,6 +389,8 @@ class Window(Gtk.ApplicationWindow):
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.apply_theme(theme.colors())
         self.settings = read_json(STATE_DIR / "settings.json")
+        self.video_quality = next((quality for quality in QUALITIES
+                                   if quality.key == self.settings.get("webcam_quality")), HIGH)
         self.engine = Engine(self.audio_error, self.audio_end)
         self.camera_preview = Preview(self.webcam_error)
         self.take_video = Playback(self.take_video_error)
@@ -652,7 +654,8 @@ class Window(Gtk.ApplicationWindow):
         panel.set_size_request(240, -1)
         self.camera_heading = label("WEBCAM", ["eyebrow"])
         panel.append(self.camera_heading)
-        controls = self.camera_controls = box(spacing=8)
+        self.camera_controls = box(vertical=True, spacing=8)
+        controls = box(spacing=8)
         self.camera_select = Gtk.DropDown(hexpand=True)
         self.camera_select.set_tooltip_text("Camera input")
         self.camera_select.connect("notify::selected", self.camera_selected)
@@ -660,7 +663,14 @@ class Window(Gtk.ApplicationWindow):
         self.camera_refresh = button("Refresh", callback=self.refresh_cameras,
                                      classes=["flat", "small"], tooltip="Refresh camera inputs and retry preview")
         controls.append(self.camera_refresh)
-        panel.append(controls)
+        self.camera_controls.append(controls)
+        self.camera_quality = Gtk.DropDown(model=Gtk.StringList.new([quality.label for quality in QUALITIES]),
+                                          hexpand=True)
+        self.camera_quality.set_selected(QUALITIES.index(self.video_quality))
+        self.camera_quality.set_tooltip_text("Recording quality · uses the camera's supported resolution and frame rate")
+        self.camera_quality.connect("notify::selected", self.camera_quality_changed)
+        self.camera_controls.append(box(spacing=8, children=[label("Quality", ["small", "muted"]), self.camera_quality]))
+        panel.append(self.camera_controls)
         self.camera_picture = Gtk.Picture(hexpand=True, vexpand=True, can_shrink=True,
                                           content_fit=Gtk.ContentFit.CONTAIN)
         frame = Gtk.Overlay(child=self.camera_picture, hexpand=True, vexpand=True)
@@ -755,6 +765,22 @@ class Window(Gtk.ApplicationWindow):
             self.save()
         self.start_webcam_preview()
 
+    def camera_quality_changed(self, *_):
+        if self._camera_loading:
+            return
+        if self.busy or self.engine.mode == "record" or self.showing_take_video:
+            self._camera_loading = True
+            self.camera_quality.set_selected(QUALITIES.index(self.video_quality))
+            self._camera_loading = False
+            return
+        index = self.camera_quality.get_selected()
+        if index >= len(QUALITIES):
+            return
+        self.video_quality = QUALITIES[index]
+        self.settings["webcam_quality"] = self.video_quality.key
+        self.save()
+        self.start_webcam_preview()
+
     def start_webcam_preview(self):
         if self.closed or not self.webcam_enabled or self.engine.mode == "record" or self.showing_take_video:
             return False
@@ -765,10 +791,13 @@ class Window(Gtk.ApplicationWindow):
             self.camera_status.set_text("No camera input")
             return False
         try:
-            preview = self.camera_preview.start(self.camera)
+            preview = self.camera_preview.start(self.camera, quality=self.video_quality)
             self.camera_picture.set_paintable(preview)
             self.camera_placeholder.set_visible(preview is None)
-            self.camera_status.set_text("Live preview · 720p / 30 fps")
+            mode = self.camera_preview.mode
+            limited = (mode.width < self.video_quality.width or mode.height < self.video_quality.height
+                       or mode.fps_num / mode.fps_den < 29)
+            self.camera_status.set_text(f"Live preview · {mode.description}" + (" · camera limit" if limited else ""))
         except (GLib.Error, RuntimeError) as error:
             self.webcam_error(str(error))
         return False
@@ -1214,7 +1243,8 @@ class Window(Gtk.ApplicationWindow):
             video = None
             if self.webcam_enabled:
                 video = Recording(self.camera, self.session.path(self.pending_take).with_suffix(".webm"),
-                                  self.guitar_slider.get_value(), self.session.data.get("alignment_ms", 0))
+                                  self.guitar_slider.get_value(), self.session.data.get("alignment_ms", 0),
+                                  quality=self.video_quality)
                 self.camera_picture.set_paintable(None)
                 self.camera_preview.stop()
             self.engine.capture(self.input, self.pair, self.session.path(self.pending_take),
@@ -1224,7 +1254,7 @@ class Window(Gtk.ApplicationWindow):
             if video:
                 self.camera_picture.set_paintable(self.engine.video_paintable)
                 self.camera_placeholder.set_visible(False)
-                self.camera_status.set_text("Recording video + guitar + backing")
+                self.camera_status.set_text(f"Recording · {video.mode.description} · video + guitar + backing")
             self.guitar_name.set_text(self.pending_take["name"] + " · recording")
             self.notice("Recording a new take · press R or Esc to stop")
         except Exception as error:
@@ -1385,6 +1415,7 @@ class Window(Gtk.ApplicationWindow):
         self.delete_takes_button.set_sensitive(not self.busy and not recording and bool(self.session.data["takes"]))
         self.webcam_toggle.set_sensitive(not self.busy and not recording)
         self.camera_select.set_sensitive(not self.busy and not recording and bool(self.camera_devices))
+        self.camera_quality.set_sensitive(not self.busy and not recording and not self.showing_take_video)
         self.camera_refresh.set_sensitive(not self.busy and not recording)
         self.open_video_button.set_sensitive(not self.busy and not recording and
                                              bool(self.session.video_path(self.session.selected)))

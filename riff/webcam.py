@@ -11,13 +11,76 @@ from gi.repository import Gst  # noqa: E402
 
 Gst.init(None)
 
-WIDTH, HEIGHT, FPS = 1280, 720, 30
+
+@dataclass(frozen=True)
+class Quality:
+    key: str
+    label: str
+    width: int
+    height: int
+    bitrate: int
+
+
+BALANCED = Quality("balanced", "Balanced · 720p", 1280, 720, 2_500_000)
+HIGH = Quality("high", "High · 1080p", 1920, 1080, 8_000_000)
+QUALITIES = (BALANCED, HIGH)
+
+
+@dataclass(frozen=True)
+class CaptureMode:
+    width: int
+    height: int
+    fps_num: int = 30
+    fps_den: int = 1
+    input_caps: str | None = None
+
+    @property
+    def description(self):
+        size = {(1280, 720): "720p", (1920, 1080): "1080p"}.get(
+            (self.width, self.height), f"{self.width}×{self.height}")
+        return f"{size} / {self.fps_num / self.fps_den:g} fps"
 
 
 @dataclass(frozen=True)
 class Camera:
     name: str
     label: str
+    caps: str | None = None
+
+
+def capture_mode(camera, quality=BALANCED):
+    """Choose a native mode, reducing size/rate when needed without upscaling."""
+    if not camera.caps:
+        # Older/unknown devices retain the existing, conservative capture path.
+        return CaptureMode(BALANCED.width, BALANCED.height)
+    caps = Gst.Caps.from_string(camera.caps)
+    supported = caps.intersect(Gst.Caps.from_string("video/x-raw;image/jpeg"))
+    modes = []
+    for index in range(supported.get_size()):
+        structure = supported.get_structure(index)
+        structure.fixate_field_nearest_int("width", quality.width)
+        structure.fixate_field_nearest_int("height", quality.height)
+        structure.fixate_field_nearest_fraction("framerate", 30, 1)
+        has_width, width = structure.get_int("width")
+        has_height, height = structure.get_int("height")
+        has_rate, numerator, denominator = structure.get_fraction("framerate")
+        if not (has_width and has_height and has_rate and width > 1 and height > 1
+                and numerator > 0 and denominator > 0):
+            continue
+        native_rate = numerator / denominator
+        if native_rate > 30:
+            numerator, denominator = 30, 1
+        ratio = min(1, quality.width / width, quality.height / height)
+        output_width, output_height = int(width * ratio) // 2 * 2, int(height * ratio) // 2 * 2
+        fixed = Gst.Caps.new_empty()
+        fixed.append_structure(structure)
+        mode = CaptureMode(output_width, output_height, numerator, denominator, fixed.fixate().to_string())
+        score = (native_rate >= 29, output_width * output_height, min(native_rate, 30),
+                 -abs(native_rate - 30), -width * height)
+        modes.append((score, mode))
+    if not modes:
+        raise RuntimeError("This camera has no usable video mode. Select another input or press Refresh.")
+    return max(modes, key=lambda candidate: candidate[0])[1]
 
 
 @dataclass(frozen=True)
@@ -28,6 +91,11 @@ class Recording:
     alignment_ms: int = 0
     source_override: str | None = None
     preview_sink: str | None = None
+    quality: Quality = BALANCED
+
+    @property
+    def mode(self):
+        return capture_mode(self.camera, self.quality)
 
     @property
     def temporary(self):
@@ -52,7 +120,8 @@ def cameras():
             name = next((str(link) for link in links if link.resolve() == Path(path).resolve()), path)
             label = f"{device.get_display_name()} · {Path(path).name}"
             default = bool(properties.get_value("is-default")) if properties.has_field("is-default") else False
-            found[name] = (not default, Camera(name, label))
+            caps = device.get_caps()
+            found[name] = (not default, Camera(name, label, caps.to_string() if caps else None))
     finally:
         monitor.stop()
     return [camera for _, camera in sorted(found.values(), key=lambda item: (item[0], item[1].label))]
@@ -65,10 +134,14 @@ def require_elements(*names):
                            ". Install gst-plugin-gtk4 and gst-plugins-good.")
 
 
-def source(camera, override=None):
+def source(camera, override=None, mode=None):
+    mode = mode or capture_mode(camera)
     capture = override or f"v4l2src device={json.dumps(camera.name)} do-timestamp=true"
+    if mode.input_caps:
+        capture += f" ! capsfilter caps={json.dumps(mode.input_caps)}"
     return (f"{capture} ! decodebin ! videoconvert ! videoscale ! videorate ! "
-            f"video/x-raw,format=I420,width={WIDTH},height={HEIGHT},framerate={FPS}/1,pixel-aspect-ratio=1/1")
+            f"video/x-raw,format=I420,width={mode.width},height={mode.height},"
+            f"framerate={mode.fps_num}/{mode.fps_den},pixel-aspect-ratio=1/1")
 
 
 def preview_sink(override=None, sync=False):
@@ -86,12 +159,15 @@ def paintable(pipeline):
 
 def recording_branch(recording):
     require_elements("vp8enc", "opusenc", "webmmux")
+    mode = recording.mode
+    threads = 4 if recording.quality == HIGH else 2
     return (
-        f"{source(recording.camera, recording.source_override)} ! tee name=camera_tee "
+        f"{source(recording.camera, recording.source_override, mode)} ! tee name=camera_tee "
         "camera_tee. ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 leaky=downstream ! "
         f"{preview_sink(recording.preview_sink)} "
-        "camera_tee. ! queue ! vp8enc deadline=1 cpu-used=4 threads=2 target-bitrate=2500000 "
-        f"keyframe-max-dist={FPS * 2} ! queue ! camera_mux.video_0 "
+        f"camera_tee. ! queue ! vp8enc deadline=1 cpu-used=4 threads={threads} "
+        f"target-bitrate={recording.quality.bitrate} keyframe-max-dist={round(mode.fps_num / mode.fps_den * 2)} "
+        "! queue ! camera_mux.video_0 "
         "audiomixer name=video_mix ! audioconvert ! audioresample ! "
         "audio/x-raw,format=S16LE,rate=48000,channels=2 ! opusenc bitrate=192000 ! queue ! camera_mux.audio_0 "
         "webmmux name=camera_mux ! "
@@ -103,11 +179,13 @@ class Preview:
     def __init__(self, on_error=lambda message: None):
         self.on_error = on_error
         self.pipeline = self.bus = None
+        self.mode = None
 
-    def start(self, camera, source_override=None, test_sink=None):
+    def start(self, camera, source_override=None, test_sink=None, quality=BALANCED):
         self.stop()
         try:
-            description = f"{source(camera, source_override)} ! {preview_sink(test_sink)}"
+            self.mode = capture_mode(camera, quality)
+            description = f"{source(camera, source_override, self.mode)} ! {preview_sink(test_sink)}"
             self.pipeline = Gst.parse_launch(description)
             self.bus = self.pipeline.get_bus()
             self.bus.add_signal_watch()

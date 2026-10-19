@@ -8,13 +8,14 @@ import subprocess
 import tempfile
 import time
 import unittest
+import wave
 
 from gi.repository import GLib
 
 from riff.audio import Device, Engine, Gst
 from riff.metronome import MAX_GAIN, MetronomeSettings
-from riff.storage import RATE, Session
-from riff.webcam import Camera, Playback, Preview, Recording
+from riff.storage import RATE, Session, export_video
+from riff.webcam import BALANCED, HIGH, Camera, Playback, Preview, Recording
 from test_audio import pcm16, spin_until
 
 
@@ -38,12 +39,13 @@ class WebcamIntegration(unittest.TestCase):
         self.session.data['backing'] = {'file': path.name, 'name': 'Backing', 'duration': 3}
         return path
 
-    def record(self, backing=None, duration=0.65, position=0, silent=False, gain=1, metronome=None, source=None):
+    def record(self, backing=None, duration=0.65, position=0, silent=False, gain=1, metronome=None, source=None,
+               quality=BALANCED, camera=None):
         take = self.session.next_take()
         self.session.data['playback_start'] = position
-        video = Recording(Camera('generated', 'Test camera'), self.session.path(take).with_suffix('.webm'),
+        video = Recording(camera or Camera('generated', 'Test camera'), self.session.path(take).with_suffix('.webm'),
                           gain, source_override=source or 'videotestsrc is-live=true pattern=ball',
-                          preview_sink='fakesink name=camera_preview sync=false async=false')
+                          preview_sink='fakesink name=camera_preview sync=false async=false', quality=quality)
         self.engine.capture(Device('test', 'Generated input', 2), (0, 1), self.session.path(take), backing,
                             source_override=('audiotestsrc is-live=true wave=silence' if silent else
                                              'audiotestsrc is-live=true wave=sine freq=880 volume=0.2'),
@@ -134,6 +136,33 @@ class WebcamIntegration(unittest.TestCase):
         self.assertGreater(self.tone(self.video_audio(video), 880), 0.17)
         self.assertEqual(Session.open(self.session.folder).selected['video'], video.name)
         self.assertGreater(take['duration'], 0.6)
+
+    def test_high_records_native_1080p_jpeg_and_exports_the_full_resolution_clip(self):
+        camera = Camera('generated', 'HD camera',
+                        'video/x-raw,width=1280,height=720,framerate=30/1;'
+                        'image/jpeg,width=1920,height=1080,framerate=30/1')
+        take, video = self.record(self.backing('0.2*sin(2*PI*220*t)'), quality=HIGH, camera=camera,
+                                  source='videotestsrc is-live=true pattern=ball ! jpegenc')
+        probe = self.probe(video)
+        picture = next(stream for stream in probe['streams'] if stream['codec_type'] == 'video')
+        self.assertEqual((picture['width'], picture['height'], picture['r_frame_rate']), (1920, 1080, '30/1'))
+        with wave.open(str(self.session.path(take))) as audio:
+            self.assertEqual((audio.getsampwidth(), audio.getframerate(), audio.getnchannels()), (3, RATE, 2))
+        output = self.root / 'high.mp4'
+        export_video(self.session, output)
+        exported = self.probe(output)
+        picture = next(stream for stream in exported['streams'] if stream['codec_type'] == 'video')
+        self.assertEqual((picture['width'], picture['height'], picture['r_frame_rate']), (1920, 1080, '30/1'))
+        self.assertAlmostEqual(float(exported['format']['duration']), float(probe['format']['duration']), delta=0.04)
+        values = self.video_audio(output)
+        self.assertAlmostEqual(self.tone(values, 880), 0.2, delta=0.02)
+        self.assertAlmostEqual(self.tone(values, 220), 0.13, delta=0.02)
+
+    def test_high_falls_back_to_a_smaller_native_camera_without_upscaling(self):
+        camera = Camera('generated', 'Small camera', 'video/x-raw,width=640,height=480,framerate=15/1')
+        _, video = self.record(quality=HIGH, camera=camera)
+        picture = next(stream for stream in self.probe(video)['streams'] if stream['codec_type'] == 'video')
+        self.assertEqual((picture['width'], picture['height'], picture['r_frame_rate']), (640, 480, '15/1'))
 
     def test_camera_failure_preserves_the_audio_take(self):
         take = self.session.next_take()
